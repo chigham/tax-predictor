@@ -449,8 +449,9 @@ function popupMarkup(properties) {
         <dt>Account</dt><dd>${escapeHtml(displayValue(properties.ACCTID))}</dd>
         <dt>City / ZIP</dt><dd>${escapeHtml(displayValue(properties.CITY))} ${escapeHtml(displayValue(properties.ZIPCODE, ""))}</dd>
         <dt>Land use</dt><dd>${escapeHtml(displayValue(properties.DESCLU))}</dd>
-        <dt>Land assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMLNDVL))}</dd>
-        <dt>Total assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMTTLVL))}</dd>
+        <dt>Land assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMLNDVL))} ${properties.NFMTTLVL ? `(${((properties.NFMLNDVL / properties.NFMTTLVL) * 100).toFixed(0)}%)` : ""}</dd>
+        <dt>Improvement assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMIMPVL))} ${properties.NFMTTLVL ? `(${((properties.NFMIMPVL / properties.NFMTTLVL) * 100).toFixed(0)}%)` : ""}</dd>
+        <dt>Total assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMTTLVL))} ${properties.NFMTTLVL ? `(100%)` : ""}</dd>
         <dt>Zone</dt><dd>${escapeHtml(displayValue(properties.ZONING))}</dd>
       </dl>
     </div>`;
