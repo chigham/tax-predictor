@@ -92,6 +92,19 @@ function updateZoomMetric() {
   elements.zoomLevel.textContent = map.getZoom();
 }
 
+function clearParcelResults() {
+  if (currentRequest) {
+    currentRequest.abort();
+    currentRequest = null;
+  }
+  if (parcelLayer) {
+    map.removeLayer(parcelLayer);
+    parcelLayer = null;
+  }
+  elements.parcelCount.textContent = "—";
+  elements.refreshParcels.disabled = true;
+}
+
 function showTool(toolKey) {
   const config = TOOL_CONFIG[toolKey];
   if (!config) return;
@@ -106,16 +119,18 @@ function showTool(toolKey) {
     : "All Maryland";
   elements.parcelCount.textContent = "—";
   updateZoomMetric();
-  loadParcels();
+  if (selectedDistrict) {
+    loadParcels();
+  } else {
+    clearParcelResults();
+    setStatus(`${config.title} selected. Choose a district to load parcels.`);
+    updateMapStatus("Choose a General Assembly district to load parcels");
+  }
 }
 
 function closeTool() {
   activeTool = null;
-  if (currentRequest) currentRequest.abort();
-  if (parcelLayer) {
-    map.removeLayer(parcelLayer);
-    parcelLayer = null;
-  }
+  clearParcelResults();
   elements.toolPanel.hidden = true;
   elements.analysisSelect.value = "";
   elements.analysisSelection.textContent = "Choose an analysis";
@@ -487,13 +502,14 @@ function renderParcels(geojson, toolKey, district = null) {
 }
 
 async function loadParcels() {
-  if (!activeTool) return;
+  if (!activeTool || !selectedDistrict) return;
   const toolAtRequestStart = activeTool;
   const districtAtRequestStart = selectedDistrict;
   const config = TOOL_CONFIG[toolAtRequestStart];
 
   if (currentRequest) currentRequest.abort();
-  currentRequest = new AbortController();
+  const request = new AbortController();
+  currentRequest = request;
   elements.refreshParcels.disabled = true;
   setStatus(
     districtAtRequestStart
@@ -510,13 +526,13 @@ async function loadParcels() {
       payload = await loadDistrictParcels(
         toolAtRequestStart,
         districtAtRequestStart,
-        currentRequest.signal,
+        request.signal,
       );
     } else {
       const query = buildParcelQuery(toolAtRequestStart, districtAtRequestStart);
       const response = await fetch(query.url, {
         ...query.options,
-        signal: currentRequest.signal,
+        signal: request.signal,
         headers: { Accept: "application/geo+json, application/json" },
       });
       payload = await response.json();
@@ -530,7 +546,10 @@ async function loadParcels() {
       queryWasTruncated = Boolean(payload.exceededTransferLimit);
     }
 
-    if (activeTool === toolAtRequestStart) {
+    if (
+      activeTool === toolAtRequestStart &&
+      selectedDistrict === districtAtRequestStart
+    ) {
       const filteredPayload = filterParcelsToDistrict(payload, districtAtRequestStart);
       renderParcels(filteredPayload, toolAtRequestStart, districtAtRequestStart);
       const limitNotice = queryWasTruncated
@@ -545,10 +564,14 @@ async function loadParcels() {
     updateMapStatus("Parcel request failed");
     setStatus(`Could not load parcels. ${error.message}`, "error");
   } finally {
-    if (activeTool === toolAtRequestStart) {
+    if (
+      currentRequest === request &&
+      activeTool === toolAtRequestStart &&
+      selectedDistrict === districtAtRequestStart
+    ) {
       elements.refreshParcels.disabled = false;
     }
-    currentRequest = null;
+    if (currentRequest === request) currentRequest = null;
   }
 }
 
@@ -592,7 +615,14 @@ elements.districtSelect.addEventListener("change", () => {
 
   if (activeTool) {
     elements.parcelCount.textContent = "—";
-    loadParcels();
+    if (selectedDistrict) {
+      loadParcels();
+    } else {
+      clearParcelResults();
+      const config = TOOL_CONFIG[activeTool];
+      setStatus(`${config.title} selected. Choose a district to load parcels.`);
+      updateMapStatus("Choose a General Assembly district to load parcels");
+    }
   } else {
     updateMapStatus(selectedDistrict ? `${formatDistrictName()} selected` : "All Maryland selected");
   }
