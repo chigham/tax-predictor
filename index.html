@@ -40,11 +40,19 @@
               <span class="button-arrow" aria-hidden="true">⌄</span>
             </button>
             <div id="geography-menu" class="selection-menu" hidden>
-              <label for="district-select">General Assembly district</label>
-              <select id="district-select" disabled>
-                <option value="">Loading districts…</option>
+              <label for="geography-type-select">Geography type</label>
+              <select id="geography-type-select">
+                <option value="assembly">Maryland General Assembly districts</option>
+                <option value="congressional">U.S. congressional districts</option>
+                <option value="county">Counties</option>
+                <option value="municipality">Municipalities</option>
+                <option value="countyCouncil" disabled>County council districts — local sources required</option>
               </select>
-              <p>Parcels are included when their centers fall inside the selected district.</p>
+              <label id="geography-choice-label" for="geography-choice-select">Choose a district</label>
+              <select id="geography-choice-select" disabled>
+                <option value="">Loading choices…</option>
+              </select>
+              <p>Parcels are included when their centers fall inside the selected geography.</p>
             </div>
           </div>
           <div class="selection-control">

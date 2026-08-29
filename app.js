@@ -1,10 +1,39 @@
 const PARCEL_LAYER_URL =
   "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0";
-const DISTRICT_LAYER_URL =
-  "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_ElectionBoundaries/FeatureServer/1";
 const STATE_CENTER = [39.2, -76.7];
 const STATE_ZOOM = 8;
 const MAX_PARCELS_PER_REQUEST = 1000;
+
+const GEOGRAPHY_CONFIG = {
+  assembly: {
+    label: "Maryland General Assembly districts",
+    choiceLabel: "District",
+    serviceUrl: "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_ElectionBoundaries/FeatureServer/1",
+    valueField: "DISTRICT",
+    formatChoice: (value) => `MD - ${value}`,
+  },
+  congressional: {
+    label: "U.S. congressional districts",
+    choiceLabel: "District",
+    serviceUrl: "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_ElectionBoundaries/FeatureServer/0",
+    valueField: "DISTRICT",
+    formatChoice: (value) => `U.S. - ${value}`,
+  },
+  county: {
+    label: "Counties",
+    choiceLabel: "County",
+    serviceUrl: "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_PoliticalBoundaries/FeatureServer/1",
+    valueField: "COUNTY",
+    formatChoice: (value) => value,
+  },
+  municipality: {
+    label: "Municipalities",
+    choiceLabel: "Municipality",
+    serviceUrl: "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_PoliticalBoundaries/FeatureServer/5",
+    valueField: "MUN_NAME",
+    formatChoice: formatMunicipalityName,
+  },
+};
 
 const TOOL_CONFIG = {
   adu: {
@@ -61,7 +90,9 @@ const elements = {
   geographyToggle: document.querySelector("#geography-toggle"),
   geographyMenu: document.querySelector("#geography-menu"),
   geographySelection: document.querySelector("#geography-selection"),
-  districtSelect: document.querySelector("#district-select"),
+  geographyTypeSelect: document.querySelector("#geography-type-select"),
+  geographyChoiceLabel: document.querySelector("#geography-choice-label"),
+  geographyChoiceSelect: document.querySelector("#geography-choice-select"),
   analysisToggle: document.querySelector("#analysis-toggle"),
   analysisMenu: document.querySelector("#analysis-menu"),
   analysisSelection: document.querySelector("#analysis-selection"),
@@ -71,9 +102,10 @@ const elements = {
 
 let activeTool = null;
 let parcelLayer = null;
-let districtLayer = null;
-let districtFeatures = [];
-let selectedDistrict = null;
+let geographyLayer = null;
+let geographyFeatures = [];
+let selectedGeography = null;
+let geographyLoadRequest = null;
 let currentRequest = null;
 
 function setStatus(message, state = "ready") {
@@ -114,17 +146,17 @@ function showTool(toolKey) {
   elements.toolKicker.textContent = config.kicker;
   elements.toolTitle.textContent = config.title;
   elements.toolDescription.textContent = config.description;
-  elements.selectedGeography.textContent = selectedDistrict
-    ? `MD - ${selectedDistrict.properties.DISTRICT}`
+  elements.selectedGeography.textContent = selectedGeography
+    ? formatGeographyName(selectedGeography)
     : "All Maryland";
   elements.parcelCount.textContent = "—";
   updateZoomMetric();
-  if (selectedDistrict) {
+  if (selectedGeography) {
     loadParcels();
   } else {
     clearParcelResults();
-    setStatus(`${config.title} selected. Choose a district to load parcels.`);
-    updateMapStatus("Choose a General Assembly district to load parcels");
+    setStatus(`${config.title} selected. Choose a geography to load parcels.`);
+    updateMapStatus("Choose a geography to load parcels");
   }
 }
 
@@ -135,7 +167,7 @@ function closeTool() {
   elements.analysisSelect.value = "";
   elements.analysisSelection.textContent = "Choose an analysis";
   elements.parcelCount.textContent = "—";
-  updateMapStatus(selectedDistrict ? `${formatDistrictName()} selected` : "Select a filter to begin");
+  updateMapStatus(selectedGeography ? `${formatGeographyName()} selected` : "Select a filter to begin");
 }
 
 function getMapExtent() {
@@ -148,54 +180,94 @@ function getMapExtent() {
   };
 }
 
-function formatDistrictName(district = selectedDistrict) {
-  return district ? `MD - ${district.properties.DISTRICT}` : "All Maryland";
+function formatGeographyName(feature = selectedGeography) {
+  if (!feature) return "All Maryland";
+  const config = GEOGRAPHY_CONFIG[elements.geographyTypeSelect.value];
+  return config.formatChoice(feature.properties[config.valueField]);
 }
 
-function districtQueryUrl() {
+function formatMunicipalityName(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/(^|[ -])([a-z])/g, (_, separator, letter) => `${separator}${letter.toUpperCase()}`);
+}
+
+function geographyQueryUrl(type) {
+  const config = GEOGRAPHY_CONFIG[type];
   const params = new URLSearchParams({
     where: "1=1",
-    outFields: "DISTRICT",
+    outFields: config.valueField,
     returnGeometry: "true",
     outSR: "4326",
+    resultRecordCount: "3000",
     f: "geojson",
   });
-  return `${DISTRICT_LAYER_URL}/query?${params.toString()}`;
+  return `${config.serviceUrl}/query?${params.toString()}`;
 }
 
-async function loadDistricts() {
+async function loadGeographyChoices(type) {
+  const config = GEOGRAPHY_CONFIG[type];
+  if (geographyLoadRequest) geographyLoadRequest.abort();
+  const request = new AbortController();
+  geographyLoadRequest = request;
+  elements.geographyChoiceLabel.textContent = `Choose a ${config.choiceLabel.toLowerCase()}`;
+  elements.geographyChoiceSelect.disabled = true;
+  elements.geographyChoiceSelect.replaceChildren(new Option("Loading choices…", ""));
+
   try {
-    const response = await fetch(districtQueryUrl(), {
+    const response = await fetch(geographyQueryUrl(type), {
+      signal: request.signal,
       headers: { Accept: "application/geo+json, application/json" },
     });
     const payload = await response.json();
 
     if (!response.ok || payload.error) {
-      throw new Error(payload.error?.message || `District service returned ${response.status}.`);
+      throw new Error(payload.error?.message || `Geography service returned ${response.status}.`);
     }
     if (payload.type !== "FeatureCollection") {
-      throw new Error("The district service did not return GeoJSON.");
+      throw new Error("The geography service did not return GeoJSON.");
     }
+    if (geographyLoadRequest !== request) return;
 
-    districtFeatures = (payload.features || [])
-      .filter((feature) => feature.properties?.DISTRICT)
-      .sort((a, b) => a.properties.DISTRICT.localeCompare(b.properties.DISTRICT));
+    const featuresByValue = new Map();
+    (payload.features || [])
+      .filter((feature) => feature.geometry && feature.properties?.[config.valueField])
+      .forEach((feature) => {
+        const value = String(feature.properties[config.valueField]);
+        const geometry = feature.geometry.type === "Polygon"
+          ? [feature.geometry.coordinates]
+          : feature.geometry.coordinates;
+        const existing = featuresByValue.get(value);
+        if (existing) {
+          existing.geometry.coordinates.push(...geometry);
+        } else {
+          featuresByValue.set(value, {
+            type: "Feature",
+            properties: { ...feature.properties, [config.valueField]: value },
+            geometry: { type: "MultiPolygon", coordinates: [...geometry] },
+          });
+        }
+      });
 
-    elements.districtSelect.replaceChildren(new Option("All Maryland", ""));
-    districtFeatures.forEach((feature) => {
-      const district = feature.properties.DISTRICT;
-      elements.districtSelect.add(new Option(`MD - ${district}`, district));
+    geographyFeatures = [...featuresByValue.values()]
+      .sort((a, b) => String(a.properties[config.valueField]).localeCompare(String(b.properties[config.valueField])));
+
+    elements.geographyChoiceLabel.textContent = `Choose a ${config.choiceLabel.toLowerCase()}`;
+    elements.geographyChoiceSelect.replaceChildren(new Option("All Maryland", ""));
+    geographyFeatures.forEach((feature) => {
+      const value = feature.properties[config.valueField];
+      elements.geographyChoiceSelect.add(new Option(config.formatChoice(value), value));
     });
-    elements.districtSelect.disabled = false;
+    elements.geographyChoiceSelect.disabled = false;
   } catch (error) {
+    if (error.name === "AbortError" || geographyLoadRequest !== request) return;
     console.error(error);
-    elements.districtSelect.replaceChildren(new Option("Districts unavailable", ""));
-    elements.districtSelect.disabled = true;
-    updateMapStatus("Could not load General Assembly districts");
+    elements.geographyChoiceSelect.replaceChildren(new Option("Choices unavailable", ""));
+    updateMapStatus(`Could not load ${config.label.toLowerCase()}`);
   }
 }
 
-function createDistrictStyle() {
+function createGeographyStyle() {
   return {
     color: "#0f4d40",
     weight: 2,
@@ -206,19 +278,19 @@ function createDistrictStyle() {
   };
 }
 
-function showSelectedDistrict() {
-  if (districtLayer) {
-    map.removeLayer(districtLayer);
-    districtLayer = null;
+function showSelectedGeography() {
+  if (geographyLayer) {
+    map.removeLayer(geographyLayer);
+    geographyLayer = null;
   }
-  if (!selectedDistrict) {
+  if (!selectedGeography) {
     map.setView(STATE_CENTER, STATE_ZOOM);
     return;
   }
 
-  districtLayer = L.geoJSON(selectedDistrict, { style: createDistrictStyle() }).addTo(map);
-  districtLayer.bringToFront();
-  map.fitBounds(districtLayer.getBounds(), { padding: [42, 42] });
+  geographyLayer = L.geoJSON(selectedGeography, { style: createGeographyStyle() }).addTo(map);
+  geographyLayer.bringToFront();
+  map.fitBounds(geographyLayer.getBounds(), { padding: [42, 42] });
 }
 
 function ringCenter(ring) {
@@ -293,22 +365,22 @@ function webMercatorPoint([longitude, latitude]) {
   return [x, y];
 }
 
-function filterParcelsToDistrict(geojson, district = selectedDistrict) {
-  if (!district) return geojson;
+function filterParcelsToGeography(geojson, geography = selectedGeography) {
+  if (!geography) return geojson;
 
   return {
     ...geojson,
     features: geojson.features.filter((feature) => {
       const center = geometryCenter(feature.geometry);
-      return center && pointInGeometry(center, district.geometry);
+      return center && pointInGeometry(center, geography.geometry);
     }),
   };
 }
 
-function districtGeometryForQuery(district = selectedDistrict) {
-  if (!district) return null;
+function geographyGeometryForQuery(geography = selectedGeography) {
+  if (!geography) return null;
 
-  const geometry = district.geometry;
+  const geometry = geography.geometry;
   const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
   return {
     rings: polygons.flatMap((polygon) => polygon.map((ring) => ring.map(webMercatorPoint))),
@@ -316,17 +388,17 @@ function districtGeometryForQuery(district = selectedDistrict) {
   };
 }
 
-function buildParcelQuery(toolKey, district = selectedDistrict) {
+function buildParcelQuery(toolKey, geography = selectedGeography) {
   const extent = getMapExtent();
   const config = TOOL_CONFIG[toolKey];
-  const districtGeometry = districtGeometryForQuery(district);
+  const geographyGeometry = geographyGeometryForQuery(geography);
   const params = new URLSearchParams({
     where: config.where,
-    geometry: districtGeometry
-      ? JSON.stringify(districtGeometry)
+    geometry: geographyGeometry
+      ? JSON.stringify(geographyGeometry)
       : `${extent.xmin},${extent.ymin},${extent.xmax},${extent.ymax}`,
-    geometryType: districtGeometry ? "esriGeometryPolygon" : "esriGeometryEnvelope",
-    inSR: districtGeometry ? "3857" : "4326",
+    geometryType: geographyGeometry ? "esriGeometryPolygon" : "esriGeometryEnvelope",
+    inSR: geographyGeometry ? "3857" : "4326",
     spatialRel: "esriSpatialRelIntersects",
     outFields:
       "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI",
@@ -336,7 +408,7 @@ function buildParcelQuery(toolKey, district = selectedDistrict) {
     f: "geojson",
   });
 
-  if (districtGeometry) {
+  if (geographyGeometry) {
     return {
       url: `${PARCEL_LAYER_URL}/query`,
       options: {
@@ -352,8 +424,8 @@ function buildParcelQuery(toolKey, district = selectedDistrict) {
   };
 }
 
-async function loadDistrictParcels(toolKey, district, signal) {
-  const idQuery = buildParcelQuery(toolKey, district);
+async function loadGeographyParcels(toolKey, geography, signal) {
+  const idQuery = buildParcelQuery(toolKey, geography);
   const idParams = new URLSearchParams(idQuery.options.body);
   idParams.delete("outFields");
   idParams.delete("outSR");
@@ -472,7 +544,7 @@ function popupMarkup(properties) {
     </div>`;
 }
 
-function renderParcels(geojson, toolKey, district = null) {
+function renderParcels(geojson, toolKey, geography = null) {
   if (parcelLayer) {
     map.removeLayer(parcelLayer);
   }
@@ -494,17 +566,17 @@ function renderParcels(geojson, toolKey, district = null) {
   const count = geojson.features?.length || 0;
   elements.parcelCount.textContent = count.toLocaleString();
   updateMapStatus(
-    district
-      ? `${count.toLocaleString()} parcels shown for ${formatDistrictName(district)}`
+    geography
+      ? `${count.toLocaleString()} parcels shown for ${formatGeographyName(geography)}`
       : `${count.toLocaleString()} parcels shown in view`,
   );
   return count;
 }
 
 async function loadParcels() {
-  if (!activeTool || !selectedDistrict) return;
+  if (!activeTool || !selectedGeography) return;
   const toolAtRequestStart = activeTool;
-  const districtAtRequestStart = selectedDistrict;
+  const geographyAtRequestStart = selectedGeography;
   const config = TOOL_CONFIG[toolAtRequestStart];
 
   if (currentRequest) currentRequest.abort();
@@ -512,8 +584,8 @@ async function loadParcels() {
   currentRequest = request;
   elements.refreshParcels.disabled = true;
   setStatus(
-    districtAtRequestStart
-      ? `Querying parcels for ${formatDistrictName(districtAtRequestStart)}…`
+    geographyAtRequestStart
+      ? `Querying parcels for ${formatGeographyName(geographyAtRequestStart)}…`
       : "Querying parcels in the current map view…",
     "loading",
   );
@@ -522,14 +594,14 @@ async function loadParcels() {
   try {
     let payload;
     let queryWasTruncated = false;
-    if (districtAtRequestStart) {
-      payload = await loadDistrictParcels(
+    if (geographyAtRequestStart) {
+      payload = await loadGeographyParcels(
         toolAtRequestStart,
-        districtAtRequestStart,
+        geographyAtRequestStart,
         request.signal,
       );
     } else {
-      const query = buildParcelQuery(toolAtRequestStart, districtAtRequestStart);
+      const query = buildParcelQuery(toolAtRequestStart, geographyAtRequestStart);
       const response = await fetch(query.url, {
         ...query.options,
         signal: request.signal,
@@ -548,10 +620,10 @@ async function loadParcels() {
 
     if (
       activeTool === toolAtRequestStart &&
-      selectedDistrict === districtAtRequestStart
+      selectedGeography === geographyAtRequestStart
     ) {
-      const filteredPayload = filterParcelsToDistrict(payload, districtAtRequestStart);
-      renderParcels(filteredPayload, toolAtRequestStart, districtAtRequestStart);
+      const filteredPayload = filterParcelsToGeography(payload, geographyAtRequestStart);
+      renderParcels(filteredPayload, toolAtRequestStart, geographyAtRequestStart);
       const limitNotice = queryWasTruncated
         ? " The service limited this map-view result; zoom in for a complete view."
         : "";
@@ -567,7 +639,7 @@ async function loadParcels() {
     if (
       currentRequest === request &&
       activeTool === toolAtRequestStart &&
-      selectedDistrict === districtAtRequestStart
+      selectedGeography === geographyAtRequestStart
     ) {
       elements.refreshParcels.disabled = false;
     }
@@ -603,28 +675,47 @@ elements.analysisToggle.addEventListener("click", () => {
   );
 });
 
-elements.districtSelect.addEventListener("change", () => {
-  selectedDistrict = districtFeatures.find(
-    (feature) => feature.properties.DISTRICT === elements.districtSelect.value,
+elements.geographyTypeSelect.addEventListener("change", () => {
+  selectedGeography = null;
+  geographyFeatures = [];
+  showSelectedGeography();
+  clearParcelResults();
+  elements.geographySelection.textContent = "All Maryland";
+  elements.selectedGeography.textContent = "All Maryland";
+  loadGeographyChoices(elements.geographyTypeSelect.value);
+
+  if (activeTool) {
+    const config = TOOL_CONFIG[activeTool];
+    setStatus(`${config.title} selected. Choose a geography to load parcels.`);
+    updateMapStatus("Choose a geography to load parcels");
+  } else {
+    updateMapStatus("Choose a geography to begin");
+  }
+});
+
+elements.geographyChoiceSelect.addEventListener("change", () => {
+  const config = GEOGRAPHY_CONFIG[elements.geographyTypeSelect.value];
+  selectedGeography = geographyFeatures.find(
+    (feature) => String(feature.properties[config.valueField]) === elements.geographyChoiceSelect.value,
   ) || null;
-  elements.geographySelection.textContent = formatDistrictName();
-  elements.selectedGeography.textContent = formatDistrictName();
+  elements.geographySelection.textContent = formatGeographyName();
+  elements.selectedGeography.textContent = formatGeographyName();
   elements.geographyMenu.hidden = true;
   elements.geographyToggle.setAttribute("aria-expanded", "false");
-  showSelectedDistrict();
+  showSelectedGeography();
 
   if (activeTool) {
     elements.parcelCount.textContent = "—";
-    if (selectedDistrict) {
+    if (selectedGeography) {
       loadParcels();
     } else {
       clearParcelResults();
       const config = TOOL_CONFIG[activeTool];
-      setStatus(`${config.title} selected. Choose a district to load parcels.`);
-      updateMapStatus("Choose a General Assembly district to load parcels");
+      setStatus(`${config.title} selected. Choose a geography to load parcels.`);
+      updateMapStatus("Choose a geography to load parcels");
     }
   } else {
-    updateMapStatus(selectedDistrict ? `${formatDistrictName()} selected` : "All Maryland selected");
+    updateMapStatus(selectedGeography ? `${formatGeographyName()} selected` : "All Maryland selected");
   }
 });
 
@@ -644,4 +735,4 @@ elements.closeTool.addEventListener("click", closeTool);
 elements.refreshParcels.addEventListener("click", loadParcels);
 map.on("zoomend", updateZoomMetric);
 
-loadDistricts();
+loadGeographyChoices("assembly");

@@ -5,7 +5,7 @@ A vanilla HTML and JavaScript prototype for exploring Maryland parcels with two 
 - **ADU feasibility** — starts with developed residential and town-house parcels in the current map view.
 - **Tax model analyzer** — starts with parcels that have a positive appraised full value.
 
-The two choices are independent: a General Assembly district can be selected as a geographic subset, and either analysis can then be applied within that subset.
+The two choices are independent: a statewide geography can be selected as a geographic subset, and either analysis can then be applied within that subset.
 
 The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap tiles. It does not use the Esri JavaScript SDK. Parcel boundaries are requested directly from the provided ArcGIS REST feature layer as GeoJSON.
 
@@ -23,11 +23,12 @@ Then open the local URL printed by the server. No build step or package installa
 
 - Map centered on Maryland at first load.
 - Independent dropdowns for geographic subset and analysis type.
-- General Assembly district boundaries loaded from Maryland iMAP and highlighted on selection.
+- Two-tier geography selection for General Assembly districts, U.S. congressional districts, counties, and municipalities.
+- Selected statewide geography boundaries loaded from Maryland iMAP and highlighted on selection.
 - Tool-specific query definitions in `app.js`.
-- REST `query` requests constrained to the current map extent or selected district.
-- District requests first retrieve matching object IDs, then fetch parcel geometry in batches to avoid the service's transfer limit.
-- District parcel results are reduced to parcels whose calculated centers fall within the district shape.
+- REST `query` requests constrained to the current map extent or selected geography.
+- Selected-geography requests first retrieve matching object IDs, then fetch parcel geometry in batches to avoid the service's transfer limit.
+- Parcel results are reduced to parcels whose calculated centers fall within the selected geography shape.
 - GeoJSON parcel rendering with hover states and parcel detail popups.
 - Loading, success, error, and request cancellation states.
 - Responsive layout for smaller screens.
@@ -36,13 +37,15 @@ Then open the local URL printed by the server. No build step or package installa
 
 Parcel source: Maryland iMAP, `PlanningCadastre/MD_ParcelBoundaries/MapServer/0`.
 
-Geographic source: Maryland iMAP, `Boundaries/MD_ElectionBoundaries/FeatureServer/1` (Maryland Legislative Districts 2022), using the `DISTRICT` field.
+Geographic sources: Maryland iMAP's `Boundaries/MD_ElectionBoundaries` service provides 2022 U.S. congressional districts (layer 0) and Maryland legislative districts (layer 1). The `Boundaries/MD_PoliticalBoundaries` service provides county boundaries (layer 1, including Baltimore City) and detailed municipality boundaries (layer 5).
+
+County council districts are not maintained as a single statewide layer in the state boundary services reviewed for this prototype. They vary by county and should be added from each county's authoritative GIS service, with the county selected first. The UI leaves this type unavailable rather than implying that a statewide source exists.
 
 The statewide layer uses different fields from the former county service. The ADU starter filter uses `LU` values `R` (Residential) and `TH` (Town House), requires `SQFTSTRC > 0` as a developed-structure proxy, and excludes placeholder account IDs. The tax starter filter uses `NFMTTLVL > 0` (New Appraised Full Value), `EXCLASS IS NULL` (no exemption class), and the same account cleanup. This is a conservative exclusion because the layer does not provide a taxable-value or exemption-amount field. See the note on SDAT below.
 
-The current queries are intentionally starter filters, not a zoning or tax determination. Official planning, zoning, assessment, and permitting sources should be added before using either tool for decisions. Ordinary map-envelope requests remain limited to 1,000 features; zooming in and refreshing gives a more focused result. Selected-district requests page through matching object IDs so the full district result can be loaded.
+The current queries are intentionally starter filters, not a zoning or tax determination. Official planning, zoning, assessment, and permitting sources should be added before using either tool for decisions. Ordinary map-envelope requests remain limited to 1,000 features; zooming in and refreshing gives a more focused result. Selected-geography requests page through matching object IDs so the full selected result can be loaded.
 
-Note on SDAT: The SDAT Real Property Search terms prohibit automated or robotic collection, including data mining and web scraping. Therefore, we don't use that detailed info in this applications.
+Note on SDAT: The SDAT Real Property Search terms prohibit automated or robotic collection, including data mining and web scraping. Therefore, this application does not scrape or collect detailed SDAT search results.
 
 ## Suggested next steps
 
