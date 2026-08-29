@@ -5,6 +5,8 @@ A vanilla HTML and JavaScript prototype for exploring Maryland parcels with two 
 - **ADU feasibility** — starts with developed residential and town-house parcels in the current map view.
 - **Tax model analyzer** — starts with parcels that have a positive appraised full value.
 
+The two choices are independent: a General Assembly district can be selected as a geographic subset, and either analysis can then be applied within that subset.
+
 The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap tiles. It does not use the Esri JavaScript SDK. Parcel boundaries are requested directly from the provided ArcGIS REST feature layer as GeoJSON.
 
 ## Run locally
@@ -20,9 +22,12 @@ Then open the local URL printed by the server. No build step or package installa
 ## Current building blocks
 
 - Map centered on Maryland at first load.
-- Minimal landing state with two prominent tool buttons.
+- Independent dropdowns for geographic subset and analysis type.
+- General Assembly district boundaries loaded from Maryland iMAP and highlighted on selection.
 - Tool-specific query definitions in `app.js`.
-- REST `query` requests constrained to the current map extent.
+- REST `query` requests constrained to the current map extent or selected district.
+- District requests first retrieve matching object IDs, then fetch parcel geometry in batches to avoid the service's transfer limit.
+- District parcel results are reduced to parcels whose calculated centers fall within the district shape.
 - GeoJSON parcel rendering with hover states and parcel detail popups.
 - Loading, success, error, and request cancellation states.
 - Responsive layout for smaller screens.
@@ -31,9 +36,11 @@ Then open the local URL printed by the server. No build step or package installa
 
 Parcel source: Maryland iMAP, `PlanningCadastre/MD_ParcelBoundaries/MapServer/0`.
 
+Geographic source: Maryland iMAP, `Boundaries/MD_ElectionBoundaries/FeatureServer/1` (Maryland Legislative Districts 2022), using the `DISTRICT` field.
+
 The statewide layer uses different fields from the former county service. The ADU starter filter uses `LU` values `R` (Residential) and `TH` (Town House), requires `SQFTSTRC > 0` as a developed-structure proxy, and excludes placeholder account IDs. The tax starter filter uses `NFMTTLVL > 0` (New Appraised Full Value) and the same account cleanup.
 
-The current queries are intentionally starter filters, not a zoning or tax determination. Official planning, zoning, assessment, and permitting sources should be added before using either tool for decisions. The service currently limits responses to 1,000 features per request in this prototype; zooming in and refreshing gives a more focused result.
+The current queries are intentionally starter filters, not a zoning or tax determination. Official planning, zoning, assessment, and permitting sources should be added before using either tool for decisions. Ordinary map-envelope requests remain limited to 1,000 features; zooming in and refreshing gives a more focused result. Selected-district requests page through matching object IDs so the full district result can be loaded.
 
 ## Suggested next steps
 

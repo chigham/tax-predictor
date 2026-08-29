@@ -28,24 +28,43 @@
             <h1 id="app-title">ParcelLens</h1>
           </div>
         </div>
-        <p class="welcome-copy">Explore Maryland parcels with focused analysis tools.</p>
-        <div class="tool-buttons" role="group" aria-label="Analysis tools">
-          <button class="tool-button tool-button--adu" type="button" data-tool="adu">
-            <span class="tool-icon" aria-hidden="true">⌂</span>
-            <span>
-              <strong>ADU feasibility</strong>
-              <small>Find residential parcels to review</small>
-            </span>
-            <span class="button-arrow" aria-hidden="true">→</span>
-          </button>
-          <button class="tool-button tool-button--tax" type="button" data-tool="tax">
-            <span class="tool-icon" aria-hidden="true">$</span>
-            <span>
-              <strong>Tax model analyzer</strong>
-              <small>Compare assessment signals</small>
-            </span>
-            <span class="button-arrow" aria-hidden="true">→</span>
-          </button>
+        <p class="welcome-copy">Choose a geographic subset, then add an analysis type to focus the parcel view.</p>
+        <div class="selection-controls" aria-label="Parcel filters">
+          <div class="selection-control">
+            <button id="geography-toggle" class="selection-button" type="button" aria-expanded="false" aria-controls="geography-menu">
+              <span class="tool-icon" aria-hidden="true">⌖</span>
+              <span>
+                <small>Geographic subset</small>
+                <strong id="geography-selection">All Maryland</strong>
+              </span>
+              <span class="button-arrow" aria-hidden="true">⌄</span>
+            </button>
+            <div id="geography-menu" class="selection-menu" hidden>
+              <label for="district-select">General Assembly district</label>
+              <select id="district-select" disabled>
+                <option value="">Loading districts…</option>
+              </select>
+              <p>Parcels are included when their centers fall inside the selected district.</p>
+            </div>
+          </div>
+          <div class="selection-control">
+            <button id="analysis-toggle" class="selection-button" type="button" aria-expanded="false" aria-controls="analysis-menu">
+              <span class="tool-icon tool-icon--analysis" aria-hidden="true">+</span>
+              <span>
+                <small>Analysis type</small>
+                <strong id="analysis-selection">Choose an analysis</strong>
+              </span>
+              <span class="button-arrow" aria-hidden="true">⌄</span>
+            </button>
+            <div id="analysis-menu" class="selection-menu" hidden>
+              <label for="analysis-select">Choose an analysis type</label>
+              <select id="analysis-select">
+                <option value="">Select an analysis…</option>
+                <option value="adu">ADU feasibility</option>
+                <option value="tax">Tax model analyzer</option>
+              </select>
+            </div>
+          </div>
         </div>
         <p class="data-note"><span class="live-dot" aria-hidden="true"></span> Parcels provided by Maryland iMAP</p>
       </section>
@@ -54,6 +73,7 @@
         <button id="close-tool" class="close-button" type="button" aria-label="Close analysis tool">×</button>
         <p id="tool-kicker" class="eyebrow">Analysis tool</p>
         <h2 id="tool-title">Analysis tool</h2>
+        <p id="selected-geography" class="selected-geography">All Maryland</p>
         <p id="tool-description" class="tool-description"></p>
         <div class="tool-divider"></div>
         <div class="status-row">

@@ -143,12 +143,16 @@ h1 {
   line-height: 1.55;
 }
 
-.tool-buttons {
+.selection-controls {
   display: grid;
   gap: 10px;
 }
 
-.tool-button {
+.selection-control {
+  position: relative;
+}
+
+.selection-button {
   display: grid;
   grid-template-columns: 39px 1fr auto;
   align-items: center;
@@ -164,13 +168,101 @@ h1 {
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background 160ms ease;
 }
 
-.tool-button:hover,
-.tool-button:focus-visible {
+.selection-button:hover,
+.selection-button:focus-visible,
+.selection-button[aria-expanded="true"] {
   border-color: rgba(20, 107, 87, 0.46);
   background: #fff;
   box-shadow: 0 8px 22px rgba(20, 107, 87, 0.11);
   outline: none;
   transform: translateY(-2px);
+}
+
+.selection-button:focus-visible {
+  outline: none;
+}
+
+.selection-button strong,
+.selection-button small {
+  display: block;
+  text-align: left;
+}
+
+.selection-button strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.selection-button small {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.selection-menu {
+  margin-top: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(30, 49, 41, 0.1);
+}
+
+.selection-menu label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.selection-menu select {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf7;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.selection-menu select:focus-visible {
+  border-color: var(--green);
+  outline: 2px solid rgba(20, 107, 87, 0.16);
+}
+
+.selection-menu select:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.selection-menu p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.tool-icon--analysis {
+  background: #f7ecd5;
+  color: #8b671c;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.selection-button .button-arrow {
+  transition: transform 160ms ease;
+}
+
+.selection-button[aria-expanded="true"] .button-arrow {
+  transform: rotate(180deg);
 }
 
 .tool-button--tax:hover,
@@ -245,10 +337,22 @@ h1 {
 
 .tool-panel {
   top: 32px;
-  left: 32px;
+  right: 32px;
   width: min(360px, calc(100vw - 64px));
   padding: 26px;
   border-radius: 20px;
+}
+
+.selected-geography {
+  display: inline-block;
+  margin: 0 0 11px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--mint);
+  color: var(--green-dark);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 
 .close-button {
