@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A Prince George's County parcel analysis prototype."
+    />
+    <title>ParcelLens | Prince George's County</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <div id="map" class="map" aria-label="Interactive map of Prince George's County"></div>
+
+      <section class="welcome-panel" aria-labelledby="app-title">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">PL</span>
+          <div>
+            <p class="eyebrow">Property intelligence</p>
+            <h1 id="app-title">ParcelLens</h1>
+          </div>
+        </div>
+        <p class="welcome-copy">Explore Prince George's County parcels with focused analysis tools.</p>
+        <div class="tool-buttons" role="group" aria-label="Analysis tools">
+          <button class="tool-button tool-button--adu" type="button" data-tool="adu">
+            <span class="tool-icon" aria-hidden="true">⌂</span>
+            <span>
+              <strong>ADU feasibility</strong>
+              <small>Find residential parcels to review</small>
+            </span>
+            <span class="button-arrow" aria-hidden="true">→</span>
+          </button>
+          <button class="tool-button tool-button--tax" type="button" data-tool="tax">
+            <span class="tool-icon" aria-hidden="true">$</span>
+            <span>
+              <strong>Tax model analyzer</strong>
+              <small>Compare assessment signals</small>
+            </span>
+            <span class="button-arrow" aria-hidden="true">→</span>
+          </button>
+        </div>
+        <p class="data-note"><span class="live-dot" aria-hidden="true"></span> Parcels provided by Prince George's County GIS</p>
+      </section>
+
+      <aside id="tool-panel" class="tool-panel" aria-labelledby="tool-title" hidden>
+        <button id="close-tool" class="close-button" type="button" aria-label="Close analysis tool">×</button>
+        <p id="tool-kicker" class="eyebrow">Analysis tool</p>
+        <h2 id="tool-title">Analysis tool</h2>
+        <p id="tool-description" class="tool-description"></p>
+        <div class="tool-divider"></div>
+        <div class="status-row">
+          <span id="status-indicator" class="status-indicator" aria-hidden="true"></span>
+          <p id="status-message" role="status" aria-live="polite">Ready to query parcels in the current map view.</p>
+        </div>
+        <div class="metric-grid" aria-label="Parcel query results">
+          <div class="metric-card">
+            <span class="metric-label">Parcels loaded</span>
+            <strong id="parcel-count">—</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Map zoom</span>
+            <strong id="zoom-level">—</strong>
+          </div>
+        </div>
+        <button id="refresh-parcels" class="primary-action" type="button">
+          <span>Refresh parcels in view</span>
+          <span aria-hidden="true">↻</span>
+        </button>
+        <p class="prototype-note">Prototype filter only. Planning, zoning, and tax conclusions require official review.</p>
+      </aside>
+
+      <div class="map-status" aria-live="polite">
+        <span id="map-status-text">Select a tool to load parcels</span>
+      </div>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="app.js"></script>
+  </body>
+</html>
