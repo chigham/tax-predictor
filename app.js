@@ -1,7 +1,7 @@
 const PARCEL_LAYER_URL =
-  "https://gis.princegeorgescountymd.gov/arcgis/rest/services/Property/Property_Flattened/MapServer/0";
-const COUNTY_CENTER = [38.83, -76.85];
-const COUNTY_ZOOM = 10;
+  "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0";
+const STATE_CENTER = [39.2, -76.7];
+const STATE_ZOOM = 8;
 const MAX_PARCELS_PER_REQUEST = 1000;
 
 const TOOL_CONFIG = {
@@ -9,8 +9,11 @@ const TOOL_CONFIG = {
     kicker: "Residential opportunity",
     title: "ADU feasibility",
     description:
-      "Load residential, developed parcels in the current view as a starting point for ADU research.",
-    where: "RESIDENTIAL_IND IN ('D', 'H') AND DEVELOPED = 'Y'",
+      "Load developed residential and town-house parcels in the current view as a starting point for ADU research.",
+    // LU identifies the broad Maryland land-use class; SQFTSTRC is a practical
+    // proxy for a developed parcel in this statewide layer.
+    where:
+      "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND LU IN ('R', 'TH') AND SQFTSTRC > 0",
     color: "#146b57",
     fillColor: "#8ed1b4",
   },
@@ -18,8 +21,9 @@ const TOOL_CONFIG = {
     kicker: "Assessment signals",
     title: "Tax model analyzer",
     description:
-      "Load parcels with current assessments so future tax-model assumptions can be compared.",
-    where: "CURR_ASSESS > 0",
+      "Load Maryland parcels with a positive appraised full value so future tax-model assumptions can be compared.",
+    where:
+      "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND NFMTTLVL > 0",
     color: "#9b721e",
     fillColor: "#e5be72",
   },
@@ -28,7 +32,7 @@ const TOOL_CONFIG = {
 const map = L.map("map", {
   zoomControl: false,
   preferCanvas: true,
-}).setView(COUNTY_CENTER, COUNTY_ZOOM);
+}).setView(STATE_CENTER, STATE_ZOOM);
 
 L.control
   .zoom({ position: "bottomright" })
@@ -122,7 +126,7 @@ function buildParcelQuery(toolKey) {
     inSR: "4326",
     spatialRel: "esriSpatialRelIntersects",
     outFields:
-      "OBJECTID,ACCOUNT,OWNER_NAME,PROPERTY_DESC,HOUSE_NUMBER,STREET_NAME,STREET_TYPE,CITY,ZIP5,RESIDENTIAL_IND,DEVELOPED,DWELLING_TYPE,DWELLING_UNITS,STRUCTURE_SQ_FT,YEAR_BUILT,SALES_PRICE,CURR_ASSESS,FCV_LAND,FCV_IMPS,ZONE_CODE1,FLOOD_PLAIN",
+      "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI",
     returnGeometry: "true",
     outSR: "4326",
     resultRecordCount: String(MAX_PARCELS_PER_REQUEST),
@@ -164,20 +168,28 @@ function escapeHtml(value) {
 }
 
 function popupMarkup(properties) {
-  const address = [properties.HOUSE_NUMBER, properties.STREET_NAME, properties.STREET_TYPE]
+  const address = [
+    properties.STRTNUM,
+    properties.STRTDIR,
+    properties.STRTNAM,
+    properties.STRTTYP,
+    properties.STRTSFX,
+    properties.STRTUNT,
+  ]
     .filter(Boolean)
     .join(" ");
-  const title = address || displayValue(properties.PROPERTY_DESC, "Selected parcel");
+  const title = displayValue(properties.ADDRESS, address || "Selected parcel");
 
   return `
     <div class="parcel-popup">
       <h3>${escapeHtml(title)}</h3>
       <dl>
-        <dt>Account</dt><dd>${escapeHtml(displayValue(properties.ACCOUNT))}</dd>
-        <dt>City / ZIP</dt><dd>${escapeHtml(displayValue(properties.CITY))} ${escapeHtml(displayValue(properties.ZIP5, ""))}</dd>
-        <dt>Land assessment</dt><dd>${escapeHtml(formatCurrency(properties.FCV_LAND))}</dd>
-        <dt>Total assessment</dt><dd>${escapeHtml(formatCurrency(properties.CURR_ASSESS))}</dd>
-        <dt>Zone</dt><dd>${escapeHtml(displayValue(properties.ZONE_CODE1))}</dd>
+        <dt>Account</dt><dd>${escapeHtml(displayValue(properties.ACCTID))}</dd>
+        <dt>City / ZIP</dt><dd>${escapeHtml(displayValue(properties.CITY))} ${escapeHtml(displayValue(properties.ZIPCODE, ""))}</dd>
+        <dt>Land use</dt><dd>${escapeHtml(displayValue(properties.DESCLU))}</dd>
+        <dt>Land assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMLNDVL))}</dd>
+        <dt>Total assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMTTLVL))}</dd>
+        <dt>Zone</dt><dd>${escapeHtml(displayValue(properties.ZONING))}</dd>
       </dl>
     </div>`;
 }
