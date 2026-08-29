@@ -33,6 +33,80 @@ const GEOGRAPHY_CONFIG = {
     valueField: "MUN_NAME",
     formatChoice: formatMunicipalityName,
   },
+  countyCouncil: {
+    label: "County council / commissioner districts",
+    choiceLabel: "county district",
+    valueField: "GEOGRAPHY_LABEL",
+    formatChoice: (value) => value,
+    sources: [
+      {
+        county: "Anne Arundel County",
+        serviceUrl: "https://gis.aacounty.org/arcgis/rest/services/OpenData/Political_OpenData/MapServer/4",
+        valueField: "CNCLDIST",
+        outFields: "CNCLDIST,COUNCILS",
+        formatChoice: (properties) => `${properties.CNCLDIST}${properties.COUNCILS ? ` (${properties.COUNCILS})` : ""}`,
+      },
+      {
+        county: "Baltimore City",
+        serviceUrl: "https://services1.arcgis.com/UWYHeuuJISiGmgXx/arcgis/rest/services/Baltimore_City_Council_District/FeatureServer/80",
+        valueField: "AREA_NAME",
+        outFields: "AREA_NAME",
+      },
+      {
+        county: "Baltimore County",
+        serviceUrl: "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Apps/MyNeighborhood/MapServer/13",
+        valueField: "COUNCILMANIC_DISTRICTS",
+        outFields: "COUNCILMANIC_DISTRICTS",
+      },
+      {
+        county: "Carroll County",
+        serviceUrl: "https://services.arcgis.com/Uf0DiYpD9NOFO5YH/ArcGIS/rest/services/CommissionerDistricts/FeatureServer/0",
+        valueField: "COMMDIST",
+        outFields: "COMMDIST",
+        formatChoice: (properties) => `District ${properties.COMMDIST}`,
+      },
+      {
+        county: "Cecil County",
+        serviceUrl: "https://cecilmaps.org/arcgis/rest/services/Hosted/Ceci_lCounty_Council_Districts_(effective_Feb_11_2022)/FeatureServer/0",
+        valueField: "comm_distr",
+        outFields: "comm_distr,district",
+      },
+      {
+        county: "Dorchester County",
+        serviceUrl: "https://services7.arcgis.com/yqhlYKSnzjiOzQig/ArcGIS/rest/services/Council_District_Draft4/FeatureServer/0",
+        valueField: "DIST_NAME",
+        outFields: "DIST_NAME,DISTRICT",
+      },
+      {
+        county: "Frederick County",
+        serviceUrl: "https://fcgis.frederickcountymd.gov/server_pub/rest/services/Elections/Elections/MapServer/8",
+        valueField: "COUNCIL_DIST",
+        outFields: "COUNCIL_DIST",
+        formatChoice: (properties) => `District ${properties.COUNCIL_DIST}`,
+      },
+      {
+        county: "Harford County",
+        serviceUrl: "https://services.arcgis.com/q8r0H9SbF6PzNpYE/ArcGIS/rest/services/2025_Harford_County_Election_Files_gdb/FeatureServer/2",
+        valueField: "DISTRICT",
+        outFields: "DISTRICT",
+        formatChoice: (properties) => `District ${properties.DISTRICT}`,
+      },
+      {
+        county: "Montgomery County",
+        serviceUrl: "https://gis4.montgomerycountymd.gov/arcgis/rest/services/elections/council/FeatureServer/0",
+        valueField: "COUNCIL",
+        outFields: "COUNCIL",
+        formatChoice: (properties) => `District ${properties.COUNCIL}`,
+      },
+      {
+        county: "Prince George's County",
+        serviceUrl: "https://gis.pgatlas.com/pgatlas/rest/services/Administrative/MapServer/100",
+        valueField: "DISTRICT_NUMBER",
+        outFields: "DISTRICT_NUMBER",
+        formatChoice: (properties) => `District ${properties.DISTRICT_NUMBER}`,
+      },
+    ],
+  },
 };
 
 const TOOL_CONFIG = {
@@ -205,6 +279,87 @@ function geographyQueryUrl(type) {
   return `${config.serviceUrl}/query?${params.toString()}`;
 }
 
+function countyCouncilQueryUrl(source) {
+  const params = new URLSearchParams({
+    where: "1=1",
+    outFields: source.outFields,
+    returnGeometry: "true",
+    outSR: "4326",
+    resultRecordCount: "3000",
+    f: "geojson",
+  });
+  return `${source.serviceUrl}/query?${params.toString()}`;
+}
+
+function compareCountyDistricts(a, b) {
+  const [countyA, districtA = ""] = a.properties.GEOGRAPHY_LABEL.split(" — ");
+  const [countyB, districtB = ""] = b.properties.GEOGRAPHY_LABEL.split(" — ");
+  const countyComparison = countyA.localeCompare(countyB);
+  if (countyComparison) return countyComparison;
+
+  const numberA = Number(districtA.match(/District (\d+)/)?.[1]);
+  const numberB = Number(districtB.match(/District (\d+)/)?.[1]);
+  if (Number.isFinite(numberA) && Number.isFinite(numberB)) return numberA - numberB;
+  if (Number.isFinite(numberA)) return -1;
+  if (Number.isFinite(numberB)) return 1;
+  return districtA.localeCompare(districtB);
+}
+
+async function loadCountyCouncilChoices(signal) {
+  const config = GEOGRAPHY_CONFIG.countyCouncil;
+  const responses = await Promise.all(
+    config.sources.map(async (source) => {
+      try {
+        const response = await fetch(countyCouncilQueryUrl(source), {
+          signal,
+          headers: { Accept: "application/geo+json, application/json" },
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
+          throw new Error(payload.error?.message || `Service returned ${response.status}.`);
+        }
+        return { source, payload };
+      } catch (error) {
+        if (error.name === "AbortError") throw error;
+        console.warn(`Skipping ${source.county} district service:`, error);
+        return null;
+      }
+    }),
+  );
+
+  const featuresByValue = new Map();
+  responses.filter(Boolean).forEach(({ source, payload }) => {
+    (payload.features || [])
+      .filter((feature) => feature.geometry && feature.properties?.[source.valueField])
+      .forEach((feature) => {
+        const district = String(feature.properties[source.valueField]);
+        const value = `${source.county}:${district}`;
+        const label = `${source.county} — ${source.formatChoice?.(feature.properties) || `District ${district}`}`;
+        const geometry = feature.geometry.type === "Polygon"
+          ? [feature.geometry.coordinates]
+          : feature.geometry.coordinates;
+        const existing = featuresByValue.get(value);
+        if (existing) {
+          existing.geometry.coordinates.push(...geometry);
+        } else {
+          featuresByValue.set(value, {
+            type: "Feature",
+            properties: {
+              GEOGRAPHY_LABEL: label,
+              GEOGRAPHY_VALUE: value,
+            },
+            geometry: { type: "MultiPolygon", coordinates: [...geometry] },
+          });
+        }
+      });
+  });
+
+  if (!featuresByValue.size) {
+    throw new Error("No county district services returned usable boundaries.");
+  }
+  return [...featuresByValue.values()].sort(compareCountyDistricts);
+}
+
 async function loadGeographyChoices(type) {
   const config = GEOGRAPHY_CONFIG[type];
   if (geographyLoadRequest) geographyLoadRequest.abort();
@@ -215,42 +370,47 @@ async function loadGeographyChoices(type) {
   elements.geographyChoiceSelect.replaceChildren(new Option("Loading choices…", ""));
 
   try {
-    const response = await fetch(geographyQueryUrl(type), {
-      signal: request.signal,
-      headers: { Accept: "application/geo+json, application/json" },
-    });
-    const payload = await response.json();
-
-    if (!response.ok || payload.error) {
-      throw new Error(payload.error?.message || `Geography service returned ${response.status}.`);
-    }
-    if (payload.type !== "FeatureCollection") {
-      throw new Error("The geography service did not return GeoJSON.");
-    }
-    if (geographyLoadRequest !== request) return;
-
-    const featuresByValue = new Map();
-    (payload.features || [])
-      .filter((feature) => feature.geometry && feature.properties?.[config.valueField])
-      .forEach((feature) => {
-        const value = String(feature.properties[config.valueField]);
-        const geometry = feature.geometry.type === "Polygon"
-          ? [feature.geometry.coordinates]
-          : feature.geometry.coordinates;
-        const existing = featuresByValue.get(value);
-        if (existing) {
-          existing.geometry.coordinates.push(...geometry);
-        } else {
-          featuresByValue.set(value, {
-            type: "Feature",
-            properties: { ...feature.properties, [config.valueField]: value },
-            geometry: { type: "MultiPolygon", coordinates: [...geometry] },
-          });
-        }
+    if (type === "countyCouncil") {
+      geographyFeatures = await loadCountyCouncilChoices(request.signal);
+    } else {
+      const response = await fetch(geographyQueryUrl(type), {
+        signal: request.signal,
+        headers: { Accept: "application/geo+json, application/json" },
       });
+      const payload = await response.json();
 
-    geographyFeatures = [...featuresByValue.values()]
-      .sort((a, b) => String(a.properties[config.valueField]).localeCompare(String(b.properties[config.valueField])));
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error?.message || `Geography service returned ${response.status}.`);
+      }
+      if (payload.type !== "FeatureCollection") {
+        throw new Error("The geography service did not return GeoJSON.");
+      }
+
+      const featuresByValue = new Map();
+      (payload.features || [])
+        .filter((feature) => feature.geometry && feature.properties?.[config.valueField])
+        .forEach((feature) => {
+          const value = String(feature.properties[config.valueField]);
+          const geometry = feature.geometry.type === "Polygon"
+            ? [feature.geometry.coordinates]
+            : feature.geometry.coordinates;
+          const existing = featuresByValue.get(value);
+          if (existing) {
+            existing.geometry.coordinates.push(...geometry);
+          } else {
+            featuresByValue.set(value, {
+              type: "Feature",
+              properties: { ...feature.properties, [config.valueField]: value },
+              geometry: { type: "MultiPolygon", coordinates: [...geometry] },
+            });
+          }
+        });
+
+      geographyFeatures = [...featuresByValue.values()]
+        .sort((a, b) => String(a.properties[config.valueField]).localeCompare(String(b.properties[config.valueField])));
+    }
+
+    if (geographyLoadRequest !== request) return;
 
     elements.geographyChoiceLabel.textContent = `Choose a ${config.choiceLabel.toLowerCase()}`;
     elements.geographyChoiceSelect.replaceChildren(new Option("All Maryland", ""));
