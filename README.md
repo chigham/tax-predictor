@@ -38,9 +38,11 @@ Parcel source: Maryland iMAP, `PlanningCadastre/MD_ParcelBoundaries/MapServer/0`
 
 Geographic source: Maryland iMAP, `Boundaries/MD_ElectionBoundaries/FeatureServer/1` (Maryland Legislative Districts 2022), using the `DISTRICT` field.
 
-The statewide layer uses different fields from the former county service. The ADU starter filter uses `LU` values `R` (Residential) and `TH` (Town House), requires `SQFTSTRC > 0` as a developed-structure proxy, and excludes placeholder account IDs. The tax starter filter uses `NFMTTLVL > 0` (New Appraised Full Value) and the same account cleanup.
+The statewide layer uses different fields from the former county service. The ADU starter filter uses `LU` values `R` (Residential) and `TH` (Town House), requires `SQFTSTRC > 0` as a developed-structure proxy, and excludes placeholder account IDs. The tax starter filter uses `NFMTTLVL > 0` (New Appraised Full Value), `EXCLASS IS NULL` (no exemption class), and the same account cleanup. This is a conservative exclusion because the layer does not provide a taxable-value or exemption-amount field. See the note on SDAT below.
 
 The current queries are intentionally starter filters, not a zoning or tax determination. Official planning, zoning, assessment, and permitting sources should be added before using either tool for decisions. Ordinary map-envelope requests remain limited to 1,000 features; zooming in and refreshing gives a more focused result. Selected-district requests page through matching object IDs so the full district result can be loaded.
+
+Note on SDAT: The SDAT Real Property Search terms prohibit automated or robotic collection, including data mining and web scraping. Therefore, we don't use that detailed info in this applications.
 
 ## Suggested next steps
 

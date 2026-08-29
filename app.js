@@ -23,9 +23,9 @@ const TOOL_CONFIG = {
     kicker: "Assessment signals",
     title: "Tax model analyzer",
     description:
-      "Load Maryland parcels with a positive appraised full value so future tax-model assumptions can be compared.",
+      "Load Maryland parcels with a positive appraised full value and no exemption class.",
     where:
-      "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND NFMTTLVL > 0",
+      "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND NFMTTLVL > 0 AND EXCLASS IS NULL",
     color: "#9b721e",
     fillColor: "#e5be72",
   },
