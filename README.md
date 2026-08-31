@@ -3,11 +3,11 @@
 A vanilla HTML and JavaScript prototype for exploring Maryland parcels with two analysis entry points:
 
 - **ADU feasibility** — starts with developed residential and town-house parcels in the current map view.
-- **Tax model analyzer** — starts with parcels that have a positive appraised full value.
+- **Tax model analyzer** — starts with parcels that have a positive appraised full value and have no exemption status.
 
 The two choices are independent: a statewide geography can be selected as a geographic subset, and either analysis can then be applied within that subset.
 
-The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap tiles. It does not use the Esri JavaScript SDK. Parcel boundaries are requested directly from the provided ArcGIS REST feature layer as GeoJSON.
+The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap tiles. It does not use the Esri JavaScript SDK. Parcel and jurisdiction boundaries are requested directly from the provided ArcGIS REST feature layer as GeoJSON.
 
 ## Run locally
 
@@ -23,8 +23,8 @@ Then open the local URL printed by the server. No build step or package installa
 
 - Map centered on Maryland at first load.
 - Independent dropdowns for geographic subset and analysis type.
-- Two-tier geography selection for General Assembly districts, U.S. congressional districts, counties, and municipalities.
-- County council / commissioner districts from configured local services for Anne Arundel, Baltimore City, Baltimore County, Calvert, Carroll, Cecil, Charles, Dorchester, Garrett, Frederick, Harford, Howard, Montgomery, Prince George's, Queen Anne's, Somerset, St. Mary's, Wicomico, and Worcester counties. Caroline and Kent use their county boundaries from the statewide political-boundaries layer because their commissioners are elected at-large.
+- Two-tier geography selection for General Assembly districts, U.S. congressional districts, counties, municipalities, and councilmanic/commissioner districts within counties.
+- County council / commissioner districts from county-level services for Anne Arundel, Baltimore City, Baltimore County, Calvert, Carroll, Cecil, Charles, Dorchester, Frederick, Garrett, Harford, ==Howard,== Montgomery, Prince George's, Queen Anne's, Somerset, St. Mary's, Wicomico, and Worcester counties. Allegany, Caroline, Kent, and Talbot use their county boundaries from the statewide political-boundaries layer because their commissioners are elected at-large.
 - Selected statewide geography boundaries loaded from Maryland iMAP and highlighted on selection.
 - Tool-specific query definitions in `app.js`.
 - Compact tax metrics include land value, overall assessed value, land-to-total ratio, and estimated current county tax revenue.
@@ -45,7 +45,7 @@ Geographic sources: Maryland iMAP's `Boundaries/MD_ElectionBoundaries` service p
 
 County council districts are not maintained as a single statewide layer in the state boundary services reviewed for this prototype. They vary by county, so the app combines several county-maintained services rather than implying that one statewide source exists.
 
-The prototype now combines the verified local services into one county-district choice list. The local layers use different field names, so each source is normalized before it reaches the existing parcel-query code. Multipart boundaries, such as Frederick, Cecil, and Garrett, are grouped by district; Garrett's election-district layer is grouped using its `Comm_Dist` field. Queen Anne's and Somerset counties are provided as zipped shapefiles in `assets/districts/` and parsed in the browser with shpjs. Howard County is provided by the county's WFS endpoint using its `DISTRICT20` field. Caroline and Kent are represented as one `At-large` choice each using the corresponding county shape from Maryland iMAP. The Wicomico service does not support paginated queries, so it is requested without a result-record limit. Allegany, Talbot, and Washington remain pending authoritative district sources. Montgomery's working endpoint is the ArcGIS REST path at `gis4.montgomerycountymd.gov/arcgis/rest/services/elections/council/FeatureServer/0`.
+The prototype now combines the verified local services into one county-district choice list. The local layers use different field names, so each source is normalized before it reaches the existing parcel-query code. Multipart boundaries, such as Frederick, Cecil, and Garrett, are grouped by district; Garrett's election-district layer is grouped using its `Comm_Dist` field. Queen Anne's and Somerset counties are provided as zipped shapefiles in `assets/districts/` and parsed in the browser with shpjs. Howard County is provided by the county's WFS endpoint using its `DISTRICT20` field. Allegany, Caroline, Kent, and Talbot are represented as one `At-large` choice each using the corresponding county shape from Maryland iMAP. The Wicomico service does not support paginated queries, so it is requested without a result-record limit. Howard and Washington remain pending authoritative district sources.
 
 The statewide layer uses different fields from the former county service. The ADU starter filter uses `LU` values `R` (Residential) and `TH` (Town House), requires `SQFTSTRC > 0` as a developed-structure proxy, and excludes placeholder account IDs. The tax starter filter uses `NFMTTLVL > 0` (New Appraised Full Value), `EXCLASS IS NULL` (no exemption class), and the same account cleanup. This is a conservative exclusion because the layer does not provide a taxable-value or exemption-amount field. See the note on SDAT below.
 
