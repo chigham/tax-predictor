@@ -464,6 +464,10 @@ h2 {
   font-weight: 600;
 }
 
+.metric-grid__dynamic {
+  display: contents;
+}
+
 .primary-action {
   display: flex;
   align-items: center;

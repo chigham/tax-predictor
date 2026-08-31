@@ -164,6 +164,7 @@ const TOOL_CONFIG = {
       "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND LU IN ('R', 'TH') AND SQFTSTRC > 0",
     color: "#146b57",
     fillColor: "#8ed1b4",
+    metrics: [],
   },
   tax: {
     kicker: "Assessment signals",
@@ -174,6 +175,20 @@ const TOOL_CONFIG = {
       "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND NFMTTLVL > 0 AND EXCLASS IS NULL",
     color: "#9b721e",
     fillColor: "#e5be72",
+    metrics: [
+      {
+        label: "Total land value",
+        format: (summary) => formatCurrency(summary.landValue),
+      },
+      {
+        label: "Total overall value",
+        format: (summary) => formatCurrency(summary.totalValue),
+      },
+      {
+        label: "Land value / total",
+        format: (summary) => formatPercent(summary.landValueRatio),
+      },
+    ],
   },
 };
 
@@ -201,6 +216,7 @@ const elements = {
   statusMessage: document.querySelector("#status-message"),
   parcelCount: document.querySelector("#parcel-count"),
   zoomLevel: document.querySelector("#zoom-level"),
+  analysisMetrics: document.querySelector("#analysis-metrics"),
   mapStatus: document.querySelector("#map-status-text"),
   closeTool: document.querySelector("#close-tool"),
   refreshParcels: document.querySelector("#refresh-parcels"),
@@ -241,6 +257,50 @@ function updateZoomMetric() {
   elements.zoomLevel.textContent = map.getZoom();
 }
 
+function summarizeParcels(geojson) {
+  return (geojson?.features || []).reduce(
+    (summary, feature) => {
+      const properties = feature.properties || {};
+      const landValue = Number(properties.NFMLNDVL);
+      const totalValue = Number(properties.NFMTTLVL);
+      if (Number.isFinite(landValue)) summary.landValue += landValue;
+      if (Number.isFinite(totalValue)) summary.totalValue += totalValue;
+      return summary;
+    },
+    { landValue: 0, totalValue: 0 },
+  );
+}
+
+function formatPercent(value) {
+  return Number.isFinite(value)
+    ? `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value)}%`
+    : "Not available";
+}
+
+function updateAnalysisMetrics(toolKey, geojson = null) {
+  const metrics = TOOL_CONFIG[toolKey]?.metrics || [];
+  const summary = geojson ? summarizeParcels(geojson) : null;
+  if (summary) {
+    summary.landValueRatio = summary.totalValue > 0
+      ? (summary.landValue / summary.totalValue) * 100
+      : Number.NaN;
+  }
+
+  elements.analysisMetrics.replaceChildren(
+    ...metrics.map((metric) => {
+      const card = document.createElement("div");
+      card.className = "metric-card";
+      const label = document.createElement("span");
+      label.className = "metric-label";
+      label.textContent = metric.label;
+      const value = document.createElement("strong");
+      value.textContent = summary ? metric.format(summary) : "—";
+      card.append(label, value);
+      return card;
+    }),
+  );
+}
+
 function clearParcelResults() {
   if (currentRequest) {
     currentRequest.abort();
@@ -251,6 +311,7 @@ function clearParcelResults() {
     parcelLayer = null;
   }
   elements.parcelCount.textContent = "—";
+  updateAnalysisMetrics(activeTool);
   elements.refreshParcels.disabled = true;
 }
 
@@ -267,6 +328,7 @@ function showTool(toolKey) {
     ? formatGeographyName(selectedGeography)
     : "All Maryland";
   elements.parcelCount.textContent = "—";
+  updateAnalysisMetrics(toolKey);
   updateZoomMetric();
   if (selectedGeography) {
     loadParcels();
@@ -281,6 +343,7 @@ function closeTool() {
   activeTool = null;
   clearParcelResults();
   elements.toolPanel.hidden = true;
+  updateAnalysisMetrics(null);
   elements.analysisSelect.value = "";
   elements.analysisSelection.textContent = "Choose an analysis";
   elements.parcelCount.textContent = "—";
@@ -784,6 +847,7 @@ function renderParcels(geojson, toolKey, geography = null) {
 
   const count = geojson.features?.length || 0;
   elements.parcelCount.textContent = count.toLocaleString();
+  updateAnalysisMetrics(toolKey, geojson);
   updateMapStatus(
     geography
       ? `${count.toLocaleString()} parcels shown for ${formatGeographyName(geography)}`
@@ -802,6 +866,7 @@ async function loadParcels() {
   const request = new AbortController();
   currentRequest = request;
   elements.refreshParcels.disabled = true;
+  updateAnalysisMetrics(toolAtRequestStart);
   setStatus(
     geographyAtRequestStart
       ? `Querying parcels for ${formatGeographyName(geographyAtRequestStart)}…`
@@ -925,6 +990,7 @@ elements.geographyChoiceSelect.addEventListener("change", () => {
 
   if (activeTool) {
     elements.parcelCount.textContent = "—";
+    updateAnalysisMetrics(activeTool);
     if (selectedGeography) {
       loadParcels();
     } else {
