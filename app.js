@@ -3,6 +3,8 @@ const PARCEL_LAYER_URL =
 const STATE_CENTER = [39.2, -76.7];
 const STATE_ZOOM = 8;
 const MAX_PARCELS_PER_REQUEST = 1000;
+const COUNTY_BOUNDARY_SERVICE_URL =
+  "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_PoliticalBoundaries/FeatureServer/1";
 
 const GEOGRAPHY_CONFIG = {
   assembly: {
@@ -22,7 +24,7 @@ const GEOGRAPHY_CONFIG = {
   county: {
     label: "Counties",
     choiceLabel: "County",
-    serviceUrl: "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_PoliticalBoundaries/FeatureServer/1",
+    serviceUrl: COUNTY_BOUNDARY_SERVICE_URL,
     valueField: "COUNTY",
     formatChoice: (value) => value,
   },
@@ -59,6 +61,13 @@ const GEOGRAPHY_CONFIG = {
         outFields: "COUNCILMANIC_DISTRICTS",
       },
       {
+        county: "Calvert County",
+        serviceUrl: "https://services2.arcgis.com/svdkKIzwWblQ8cKK/arcgis/rest/services/Local_Election_Districts/FeatureServer/281",
+        valueField: "DISTRICT",
+        outFields: "DISTRICT",
+        formatChoice: (properties) => `District ${properties.DISTRICT}`,
+      },
+      {
         county: "Carroll County",
         serviceUrl: "https://services.arcgis.com/Uf0DiYpD9NOFO5YH/ArcGIS/rest/services/CommissionerDistricts/FeatureServer/0",
         valueField: "COMMDIST",
@@ -70,6 +79,14 @@ const GEOGRAPHY_CONFIG = {
         serviceUrl: "https://cecilmaps.org/arcgis/rest/services/Hosted/Ceci_lCounty_Council_Districts_(effective_Feb_11_2022)/FeatureServer/0",
         valueField: "comm_distr",
         outFields: "comm_distr,district",
+      },
+      {
+        county: "Caroline County",
+        serviceUrl: COUNTY_BOUNDARY_SERVICE_URL,
+        where: "COUNTY = 'Caroline'",
+        valueField: "COUNTY",
+        outFields: "COUNTY",
+        formatChoice: () => "At-large",
       },
       {
         county: "Dorchester County",
@@ -85,6 +102,13 @@ const GEOGRAPHY_CONFIG = {
         formatChoice: (properties) => `District ${properties.COUNCIL_DIST}`,
       },
       {
+        county: "Garrett County",
+        serviceUrl: "https://services3.arcgis.com/Hj3vC5lmzqLyRabS/ArcGIS/rest/services/Board_of_Elections/FeatureServer/0",
+        valueField: "Comm_Dist",
+        outFields: "Comm_Dist",
+        formatChoice: (properties) => `District ${properties.Comm_Dist}`,
+      },
+      {
         county: "Harford County",
         serviceUrl: "https://services.arcgis.com/q8r0H9SbF6PzNpYE/ArcGIS/rest/services/2025_Harford_County_Election_Files_gdb/FeatureServer/2",
         valueField: "DISTRICT",
@@ -93,7 +117,7 @@ const GEOGRAPHY_CONFIG = {
       },
       {
         county: "Montgomery County",
-        serviceUrl: "https://gis4.montgomerycountymd.gov/arcgis/rest/services/elections/council/FeatureServer/0",
+        serviceUrl: "https://geohub.montgomerycountymd.gov/mapping1/rest/services/Boundaries/Council_Districts_slim/FeatureServer/0",
         valueField: "COUNCIL",
         outFields: "COUNCIL",
         formatChoice: (properties) => `District ${properties.COUNCIL}`,
@@ -104,6 +128,14 @@ const GEOGRAPHY_CONFIG = {
         format: "geojson",
         valueField: "DISTRICT20",
         formatChoice: (properties) => `District ${properties.DISTRICT20}`,
+      },
+      {
+        county: "Kent County",
+        serviceUrl: COUNTY_BOUNDARY_SERVICE_URL,
+        where: "COUNTY = 'Kent'",
+        valueField: "COUNTY",
+        outFields: "COUNTY",
+        formatChoice: () => "At-large",
       },
       {
         county: "Prince George's County",
@@ -121,10 +153,17 @@ const GEOGRAPHY_CONFIG = {
       },
       {
         county: "Queen Anne's County",
-        serviceUrl: "https://gis.qac.org/gisdata/Boundaries/CommissionerDistrictBoundaries.zip",
+        serviceUrl: "assets/districts/Queen_Anne_CommissionerDistrictBoundaries.zip",
         format: "shapefile",
         valueField: "CC_Dist",
         formatChoice: (properties) => `District ${properties.CC_Dist}`,
+      },
+      {
+        county: "Somerset County",
+        serviceUrl: "assets/districts/Somerset_Commissioner_Districts.zip",
+        format: "shapefile",
+        valueField: "Name",
+        formatChoice: (properties) => properties.Name,
       },
       {
         county: "St. Mary's County",
@@ -387,7 +426,7 @@ function countyCouncilQueryUrl(source) {
   if (source.queryUrl) return source.queryUrl;
 
   const params = new URLSearchParams({
-    where: "1=1",
+    where: source.where || "1=1",
     outFields: source.outFields,
     returnGeometry: "true",
     outSR: "4326",
