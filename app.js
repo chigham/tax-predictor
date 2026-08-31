@@ -173,6 +173,14 @@ const GEOGRAPHY_CONFIG = {
         formatChoice: (properties) => `District ${properties.DISTRICT}`,
       },
       {
+        county: "Talbot County",
+        serviceUrl: COUNTY_BOUNDARY_SERVICE_URL,
+        where: "COUNTY = 'Talbot'",
+        valueField: "COUNTY",
+        outFields: "COUNTY",
+        formatChoice: () => "At-large",
+      },
+      {
         county: "Wicomico County",
         serviceUrl: "https://gisapps.wicomicocounty.org/server/rest/services/CouncilmanisAdoptedDec2_2025/MapServer/7",
         valueField: "DISTRICT",
