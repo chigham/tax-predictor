@@ -99,11 +99,54 @@ const GEOGRAPHY_CONFIG = {
         formatChoice: (properties) => `District ${properties.COUNCIL}`,
       },
       {
+        county: "Howard County",
+        queryUrl: "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3ACouncil_Districts&outputFormat=application%2Fjson&maxFeatures=50",
+        format: "geojson",
+        valueField: "DISTRICT20",
+        formatChoice: (properties) => `District ${properties.DISTRICT20}`,
+      },
+      {
         county: "Prince George's County",
         serviceUrl: "https://gis.pgatlas.com/pgatlas/rest/services/Administrative/MapServer/100",
         valueField: "DISTRICT_NUMBER",
         outFields: "DISTRICT_NUMBER",
         formatChoice: (properties) => `District ${properties.DISTRICT_NUMBER}`,
+      },
+      {
+        county: "Charles County",
+        serviceUrl: "https://services7.arcgis.com/3BMWkdyrt45RNCrq/arcgis/rest/services/CommDistricts_2022/FeatureServer/0",
+        valueField: "COMM_DIST",
+        outFields: "COMM_DIST",
+        formatChoice: (properties) => `District ${properties.COMM_DIST}`,
+      },
+      {
+        county: "Queen Anne's County",
+        serviceUrl: "https://gis.qac.org/gisdata/Boundaries/CommissionerDistrictBoundaries.zip",
+        format: "shapefile",
+        valueField: "CC_Dist",
+        formatChoice: (properties) => `District ${properties.CC_Dist}`,
+      },
+      {
+        county: "St. Mary's County",
+        serviceUrl: "https://gis.stmaryscountymd.gov/server/rest/services/Public/General1/MapServer/10",
+        valueField: "DISTRICT",
+        outFields: "DISTRICT",
+        formatChoice: (properties) => `District ${properties.DISTRICT}`,
+      },
+      {
+        county: "Wicomico County",
+        serviceUrl: "https://gisapps.wicomicocounty.org/server/rest/services/CouncilmanisAdoptedDec2_2025/MapServer/7",
+        valueField: "DISTRICT",
+        outFields: "DISTRICT",
+        supportsPagination: false,
+        formatChoice: (properties) => `District ${properties.DISTRICT}`,
+      },
+      {
+        county: "Worcester County",
+        serviceUrl: "https://wcg-gisweb.co.worcester.md.us/arcgis/rest/services/Election_Districts_Map_MIL1/MapServer/14",
+        valueField: "DISTRICT",
+        outFields: "DISTRICT",
+        formatChoice: (properties) => `District ${properties.DISTRICT}`,
       },
     ],
   },
@@ -280,14 +323,16 @@ function geographyQueryUrl(type) {
 }
 
 function countyCouncilQueryUrl(source) {
+  if (source.queryUrl) return source.queryUrl;
+
   const params = new URLSearchParams({
     where: "1=1",
     outFields: source.outFields,
     returnGeometry: "true",
     outSR: "4326",
-    resultRecordCount: "3000",
     f: "geojson",
   });
+  if (source.supportsPagination !== false) params.set("resultRecordCount", "3000");
   return `${source.serviceUrl}/query?${params.toString()}`;
 }
 
@@ -310,6 +355,17 @@ async function loadCountyCouncilChoices(signal) {
   const responses = await Promise.all(
     config.sources.map(async (source) => {
       try {
+        if (source.format === "shapefile") {
+          if (typeof shp !== "function") throw new Error("The shapefile parser did not load.");
+          const response = await fetch(source.serviceUrl, { signal });
+          if (!response.ok) throw new Error(`Service returned ${response.status}.`);
+          const payload = await shp(await response.arrayBuffer());
+          if (payload.type !== "FeatureCollection") {
+            throw new Error("The shapefile service did not return GeoJSON.");
+          }
+          return { source, payload };
+        }
+
         const response = await fetch(countyCouncilQueryUrl(source), {
           signal,
           headers: { Accept: "application/geo+json, application/json" },
@@ -337,7 +393,10 @@ async function loadCountyCouncilChoices(signal) {
         const label = `${source.county} — ${source.formatChoice?.(feature.properties) || `District ${district}`}`;
         const geometry = feature.geometry.type === "Polygon"
           ? [feature.geometry.coordinates]
-          : feature.geometry.coordinates;
+          : feature.geometry.type === "MultiPolygon"
+            ? feature.geometry.coordinates
+            : [];
+        if (!geometry.length) return;
         const existing = featuresByValue.get(value);
         if (existing) {
           existing.geometry.coordinates.push(...geometry);

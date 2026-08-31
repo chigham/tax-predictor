@@ -24,7 +24,7 @@ Then open the local URL printed by the server. No build step or package installa
 - Map centered on Maryland at first load.
 - Independent dropdowns for geographic subset and analysis type.
 - Two-tier geography selection for General Assembly districts, U.S. congressional districts, counties, and municipalities.
-- County council / commissioner districts from configured local ArcGIS services for Anne Arundel, Baltimore City, Baltimore County, Carroll, Cecil, Dorchester, Frederick, Harford, Montgomery, and Prince George's counties.
+- County council / commissioner districts from configured local services for Anne Arundel, Baltimore City, Baltimore County, Carroll, Cecil, Charles, Dorchester, Frederick, Harford, Howard, Montgomery, Prince George's, Queen Anne's, St. Mary's, Wicomico, and Worcester counties.
 - Selected statewide geography boundaries loaded from Maryland iMAP and highlighted on selection.
 - Tool-specific query definitions in `app.js`.
 - REST `query` requests constrained to the current map extent or selected geography.
@@ -42,7 +42,7 @@ Geographic sources: Maryland iMAP's `Boundaries/MD_ElectionBoundaries` service p
 
 County council districts are not maintained as a single statewide layer in the state boundary services reviewed for this prototype. They vary by county, so the app combines several county-maintained services rather than implying that one statewide source exists.
 
-The prototype now combines the verified local services into one county-district choice list. The local layers use different field names, so each source is normalized before it reaches the existing parcel-query code. Multipart boundaries, such as Frederick and Cecil features, are grouped by district. Calvert, Caroline, Charles, Garrett, and Kent are not included yet because no specific authoritative service URL was available for them. The Howard WFS URL identified during research is a congressional-district layer, not a county council layer, so it is not used here. Montgomery's working endpoint is the ArcGIS REST path at `gis4.montgomerycountymd.gov/arcgis/rest/services/elections/council/FeatureServer/0`.
+The prototype now combines the verified local services into one county-district choice list. The local layers use different field names, so each source is normalized before it reaches the existing parcel-query code. Multipart boundaries, such as Frederick and Cecil features, are grouped by district. Queen Anne's County is provided as a zipped shapefile and is parsed in the browser with shpjs. Howard County is provided by the county's WFS endpoint using its `DISTRICT20` field. The Wicomico service does not support paginated queries, so it is requested without a result-record limit. Calvert, Caroline, Garrett, and Kent are not included yet because no specific authoritative service URL was available for them. Montgomery's working endpoint is the ArcGIS REST path at `gis4.montgomerycountymd.gov/arcgis/rest/services/elections/council/FeatureServer/0`.
 
 The statewide layer uses different fields from the former county service. The ADU starter filter uses `LU` values `R` (Residential) and `TH` (Town House), requires `SQFTSTRC > 0` as a developed-structure proxy, and excludes placeholder account IDs. The tax starter filter uses `NFMTTLVL > 0` (New Appraised Full Value), `EXCLASS IS NULL` (no exemption class), and the same account cleanup. This is a conservative exclusion because the layer does not provide a taxable-value or exemption-amount field. See the note on SDAT below.
 
