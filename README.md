@@ -27,6 +27,9 @@ Then open the local URL printed by the server. No build step or package installa
 - County council / commissioner districts from configured local services for Anne Arundel, Baltimore City, Baltimore County, Calvert, Carroll, Cecil, Charles, Dorchester, Garrett, Frederick, Harford, Howard, Montgomery, Prince George's, Queen Anne's, Somerset, St. Mary's, Wicomico, and Worcester counties. Caroline and Kent use their county boundaries from the statewide political-boundaries layer because their commissioners are elected at-large.
 - Selected statewide geography boundaries loaded from Maryland iMAP and highlighted on selection.
 - Tool-specific query definitions in `app.js`.
+- Compact tax metrics include land value, overall assessed value, land-to-total ratio, and estimated current county tax revenue.
+- County, municipality, and county council / commissioner selections use the temporary `COUNTY_TAX_RATES` table in `app.js`, currently set to 1% for every Maryland county and Baltimore City.
+- The tax model analyzer exposes separate land and improvement rate inputs after parcel loading. The hypothetical result is calculated only after submission as the parcel-level sum of land value × land rate plus improvement value × improvement rate.
 - REST `query` requests constrained to the current map extent or selected geography.
 - Selected-geography requests first retrieve matching object IDs, then fetch parcel geometry in batches to avoid the service's transfer limit.
 - Parcel results are reduced to parcels whose calculated centers fall within the selected geography shape.

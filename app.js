@@ -3,6 +3,32 @@ const PARCEL_LAYER_URL =
 const STATE_CENTER = [39.2, -76.7];
 const STATE_ZOOM = 8;
 const MAX_PARCELS_PER_REQUEST = 1000;
+const COUNTY_TAX_RATES = {
+  "Allegany County": 0.01,
+  "Anne Arundel County": 0.01,
+  "Baltimore City": 0.01,
+  "Baltimore County": 0.01,
+  "Calvert County": 0.01,
+  "Caroline County": 0.01,
+  "Carroll County": 0.01,
+  "Cecil County": 0.01,
+  "Charles County": 0.01,
+  "Dorchester County": 0.01,
+  "Frederick County": 0.01,
+  "Garrett County": 0.01,
+  "Harford County": 0.01,
+  "Howard County": 0.01,
+  "Kent County": 0.01,
+  "Montgomery County": 0.01,
+  "Prince George's County": 0.01,
+  "Queen Anne's County": 0.01,
+  "Somerset County": 0.01,
+  "St. Mary's County": 0.01,
+  "Talbot County": 0.01,
+  "Washington County": 0.01,
+  "Wicomico County": 0.01,
+  "Worcester County": 0.01,
+};
 const COUNTY_BOUNDARY_SERVICE_URL =
   "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_PoliticalBoundaries/FeatureServer/1";
 
@@ -232,16 +258,20 @@ const TOOL_CONFIG = {
     fillColor: "#e5be72",
     metrics: [
       {
-        label: "Total land value",
-        format: (summary) => summary.landValue === null ? "—" : formatCurrency(summary.landValue),
+        label: "Land",
+        format: (summary) => summary.landValue === null ? "—" : formatCompactCurrency(summary.landValue),
       },
       {
-        label: "Total overall value",
-        format: (summary) => summary.totalValue === null ? "—" : formatCurrency(summary.totalValue),
+        label: "Overall",
+        format: (summary) => summary.totalValue === null ? "—" : formatCompactCurrency(summary.totalValue),
       },
       {
-        label: "Land value / total",
+        label: "Land / total",
         format: (summary) => summary.landValueRatio === null ? "—" : formatPercent(summary.landValueRatio),
+      },
+      {
+        label: "Current tax",
+        format: (summary) => summary.currentTaxRevenue === null ? "—" : formatCompactCurrency(summary.currentTaxRevenue),
       },
     ],
   },
@@ -272,6 +302,11 @@ const elements = {
   parcelCount: document.querySelector("#parcel-count"),
   zoomLevel: document.querySelector("#zoom-level"),
   analysisMetrics: document.querySelector("#analysis-metrics"),
+  taxModelControls: document.querySelector("#tax-model-controls"),
+  landTaxRate: document.querySelector("#land-tax-rate"),
+  improvementTaxRate: document.querySelector("#improvement-tax-rate"),
+  taxModelResult: document.querySelector("#tax-model-result"),
+  hypotheticalTaxValue: document.querySelector("#hypothetical-tax-value"),
   mapStatus: document.querySelector("#map-status-text"),
   closeTool: document.querySelector("#close-tool"),
   refreshParcels: document.querySelector("#refresh-parcels"),
@@ -295,6 +330,8 @@ let geographyFeatures = [];
 let selectedGeography = null;
 let geographyLoadRequest = null;
 let currentRequest = null;
+let currentTaxRate = null;
+let loadedTaxParcels = null;
 
 function setStatus(message, state = "ready") {
   elements.statusMessage.textContent = message;
@@ -312,7 +349,7 @@ function updateZoomMetric() {
   elements.zoomLevel.textContent = map.getZoom();
 }
 
-function summarizeParcels(geojson) {
+function summarizeParcels(geojson, taxRate = currentTaxRate) {
   const summary = (geojson?.features || []).reduce(
     (totals, feature) => {
       const properties = feature.properties || {};
@@ -327,6 +364,9 @@ function summarizeParcels(geojson) {
   summary.landValueRatio = summary.totalValue > 0
     ? (summary.landValue / summary.totalValue) * 100
     : null;
+  summary.currentTaxRevenue = Number.isFinite(taxRate) && Number.isFinite(summary.totalValue)
+    ? summary.totalValue * taxRate
+    : null;
   return summary;
 }
 
@@ -334,6 +374,16 @@ function formatPercent(value) {
   return Number.isFinite(value)
     ? `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value)}%`
     : "Not available";
+}
+
+function formatCompactCurrency(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Not available";
+  const absolute = Math.abs(number);
+  if (absolute >= 1e9) return `$${(number / 1e9).toFixed(1)}B`;
+  if (absolute >= 1e6) return `$${(number / 1e6).toFixed(1)}M`;
+  if (absolute >= 1e3) return `$${(number / 1e3).toFixed(1)}K`;
+  return formatCurrency(number);
 }
 
 function updateAnalysisMetrics(toolKey, summary = null) {
@@ -363,6 +413,11 @@ function clearParcelResults() {
     map.removeLayer(parcelLayer);
     parcelLayer = null;
   }
+  loadedTaxParcels = null;
+  currentTaxRate = null;
+  elements.taxModelControls.hidden = true;
+  elements.taxModelResult.hidden = true;
+  elements.hypotheticalTaxValue.textContent = "—";
   elements.parcelCount.textContent = "—";
   updateAnalysisMetrics(activeTool);
   elements.refreshParcels.disabled = true;
@@ -381,6 +436,8 @@ function showTool(toolKey) {
     ? formatGeographyName(selectedGeography)
     : "All Maryland";
   elements.parcelCount.textContent = "—";
+  elements.taxModelControls.hidden = true;
+  elements.taxModelResult.hidden = true;
   updateAnalysisMetrics(toolKey);
   updateZoomMetric();
   if (selectedGeography) {
@@ -522,6 +579,7 @@ async function loadCountyCouncilChoices(signal) {
             properties: {
               GEOGRAPHY_LABEL: label,
               GEOGRAPHY_VALUE: value,
+              COUNTY: source.county,
             },
             geometry: { type: "MultiPolygon", coordinates: [...geometry] },
           });
@@ -665,6 +723,48 @@ function geometryCenter(geometry) {
     return [total[0] / centers.length, total[1] / centers.length];
   }
   return null;
+}
+
+function countyKeyFromStateName(value) {
+  const name = String(value || "").trim();
+  if (!name) return null;
+  return name === "Baltimore City" ? name : `${name} County`;
+}
+
+async function resolveCountyTaxRate(geographyType, geography, signal) {
+  if (!geography) return null;
+
+  let countyKey = null;
+  if (geographyType === "county") {
+    countyKey = countyKeyFromStateName(geography.properties?.COUNTY);
+  } else if (geographyType === "countyCouncil") {
+    countyKey = geography.properties?.COUNTY;
+  } else if (geographyType === "municipality") {
+    const center = geometryCenter(geography.geometry);
+    if (center) {
+      const params = new URLSearchParams({
+        geometry: `${center[0]},${center[1]}`,
+        geometryType: "esriGeometryPoint",
+        inSR: "4326",
+        spatialRel: "esriSpatialRelIntersects",
+        outFields: "COUNTY",
+        returnGeometry: "false",
+        resultRecordCount: "1",
+        f: "json",
+      });
+      const response = await fetch(`${COUNTY_BOUNDARY_SERVICE_URL}/query?${params.toString()}`, {
+        signal,
+        headers: { Accept: "application/json" },
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error?.message || `County service returned ${response.status}.`);
+      }
+      countyKey = countyKeyFromStateName(payload.features?.[0]?.attributes?.COUNTY);
+    }
+  }
+
+  return countyKey ? COUNTY_TAX_RATES[countyKey] ?? null : null;
 }
 
 function pointInRing(point, ring) {
@@ -864,8 +964,15 @@ async function loadParcelStatistic(toolKey, geography, field, signal, statisticT
   return value === null || value === undefined ? null : Number(value) * multiplier;
 }
 
-async function loadTaxMetrics(geography, parcelCount, signal, updateStatus) {
-  const summary = { landValue: null, totalValue: null, landValueRatio: null };
+async function loadTaxMetrics(geographyType, geography, parcelCount, signal, updateStatus) {
+  const summary = {
+    landValue: null,
+    totalValue: null,
+    landValueRatio: null,
+    currentTaxRevenue: null,
+  };
+
+  summary.countyTaxRate = await resolveCountyTaxRate(geographyType, geography, signal);
 
   try {
     updateStatus("Calculating total land value…");
@@ -995,6 +1102,42 @@ function renderParcels(geojson, toolKey, geography = null) {
   return count;
 }
 
+function prepareTaxModelControls() {
+  if (activeTool !== "tax" || !loadedTaxParcels || !Number.isFinite(currentTaxRate)) return;
+  const defaultRate = (currentTaxRate * 100).toFixed(2);
+  elements.landTaxRate.value = defaultRate;
+  elements.improvementTaxRate.value = defaultRate;
+  elements.taxModelResult.hidden = true;
+  elements.hypotheticalTaxValue.textContent = "—";
+  elements.taxModelControls.hidden = false;
+}
+
+// Is this optimized?
+function calculateHypotheticalTax(event) {
+  event.preventDefault();
+  if (!loadedTaxParcels) return;
+
+  const landRate = Number(elements.landTaxRate.value) / 100;
+  const improvementRate = Number(elements.improvementTaxRate.value) / 100;
+  if (!Number.isFinite(landRate) || landRate < 0 || !Number.isFinite(improvementRate) || improvementRate < 0) {
+    setStatus("Enter valid non-negative tax rates.", "error");
+    return;
+  }
+
+  const hypotheticalRevenue = loadedTaxParcels.features.reduce((total, feature) => {
+    const properties = feature.properties || {};
+    const landValue = Number(properties.NFMLNDVL);
+    const improvementValue = Number(properties.NFMIMPVL);
+    return total
+      + (Number.isFinite(landValue) ? landRate * landValue : 0)
+      + (Number.isFinite(improvementValue) ? improvementRate * improvementValue : 0);
+  }, 0);
+
+  elements.hypotheticalTaxValue.textContent = formatCompactCurrency(hypotheticalRevenue);
+  elements.taxModelResult.hidden = false;
+  setStatus("Hypothetical tax calculated from the loaded parcels.", "success");
+}
+
 async function loadParcels() {
   if (!activeTool || !selectedGeography) return;
   const toolAtRequestStart = activeTool;
@@ -1004,6 +1147,11 @@ async function loadParcels() {
   if (currentRequest) currentRequest.abort();
   const request = new AbortController();
   currentRequest = request;
+  loadedTaxParcels = null;
+  currentTaxRate = null;
+  elements.taxModelControls.hidden = true;
+  elements.taxModelResult.hidden = true;
+  elements.hypotheticalTaxValue.textContent = "—";
   elements.refreshParcels.disabled = true;
   updateAnalysisMetrics(toolAtRequestStart);
   setStatus(
@@ -1028,7 +1176,8 @@ async function loadParcels() {
       elements.parcelCount.textContent = objectIds.length.toLocaleString();
 
       if (toolAtRequestStart === "tax") {
-        await loadTaxMetrics(
+        const taxSummary = await loadTaxMetrics(
+          elements.geographyTypeSelect.value,
           geographyAtRequestStart,
           objectIds.length,
           request.signal,
@@ -1037,6 +1186,7 @@ async function loadParcels() {
             updateMapStatus(message);
           },
         );
+        currentTaxRate = taxSummary.countyTaxRate;
       }
 
       setStatus("Loading parcel boundaries…", "loading");
@@ -1070,7 +1220,13 @@ async function loadParcels() {
       selectedGeography === geographyAtRequestStart
     ) {
       const filteredPayload = filterParcelsToGeography(payload, geographyAtRequestStart);
+      if (toolAtRequestStart === "tax") {
+        loadedTaxParcels = filteredPayload;
+      }
       renderParcels(filteredPayload, toolAtRequestStart, geographyAtRequestStart);
+      if (toolAtRequestStart === "tax") {
+        prepareTaxModelControls();
+      }
       const limitNotice = queryWasTruncated
         ? " The service limited this map-view result; zoom in for a complete view."
         : "";
@@ -1181,6 +1337,7 @@ elements.analysisSelect.addEventListener("change", () => {
 
 elements.closeTool.addEventListener("click", closeTool);
 elements.refreshParcels.addEventListener("click", loadParcels);
+elements.taxModelControls.addEventListener("submit", calculateHypotheticalTax);
 map.on("zoomend", updateZoomMetric);
 
 loadGeographyChoices("assembly");
