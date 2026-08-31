@@ -42,6 +42,14 @@ const GEOGRAPHY_CONFIG = {
     formatChoice: (value) => value,
     sources: [
       {
+        county: "Allegany County",
+        serviceUrl: COUNTY_BOUNDARY_SERVICE_URL,
+        where: "COUNTY = 'Allegany'",
+        valueField: "COUNTY",
+        outFields: "COUNTY",
+        formatChoice: () => "At-large",
+      },
+      {
         county: "Anne Arundel County",
         serviceUrl: "https://gis.aacounty.org/arcgis/rest/services/OpenData/Political_OpenData/MapServer/4",
         valueField: "CNCLDIST",
