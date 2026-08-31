@@ -178,15 +178,15 @@ const TOOL_CONFIG = {
     metrics: [
       {
         label: "Total land value",
-        format: (summary) => formatCurrency(summary.landValue),
+        format: (summary) => summary.landValue === null ? "—" : formatCurrency(summary.landValue),
       },
       {
         label: "Total overall value",
-        format: (summary) => formatCurrency(summary.totalValue),
+        format: (summary) => summary.totalValue === null ? "—" : formatCurrency(summary.totalValue),
       },
       {
         label: "Land value / total",
-        format: (summary) => formatPercent(summary.landValueRatio),
+        format: (summary) => summary.landValueRatio === null ? "—" : formatPercent(summary.landValueRatio),
       },
     ],
   },
@@ -258,17 +258,21 @@ function updateZoomMetric() {
 }
 
 function summarizeParcels(geojson) {
-  return (geojson?.features || []).reduce(
-    (summary, feature) => {
+  const summary = (geojson?.features || []).reduce(
+    (totals, feature) => {
       const properties = feature.properties || {};
       const landValue = Number(properties.NFMLNDVL);
       const totalValue = Number(properties.NFMTTLVL);
-      if (Number.isFinite(landValue)) summary.landValue += landValue;
-      if (Number.isFinite(totalValue)) summary.totalValue += totalValue;
-      return summary;
+      if (Number.isFinite(landValue)) totals.landValue += landValue;
+      if (Number.isFinite(totalValue)) totals.totalValue += totalValue;
+      return totals;
     },
     { landValue: 0, totalValue: 0 },
   );
+  summary.landValueRatio = summary.totalValue > 0
+    ? (summary.landValue / summary.totalValue) * 100
+    : null;
+  return summary;
 }
 
 function formatPercent(value) {
@@ -277,14 +281,8 @@ function formatPercent(value) {
     : "Not available";
 }
 
-function updateAnalysisMetrics(toolKey, geojson = null) {
+function updateAnalysisMetrics(toolKey, summary = null) {
   const metrics = TOOL_CONFIG[toolKey]?.metrics || [];
-  const summary = geojson ? summarizeParcels(geojson) : null;
-  if (summary) {
-    summary.landValueRatio = summary.totalValue > 0
-      ? (summary.landValue / summary.totalValue) * 100
-      : Number.NaN;
-  }
 
   elements.analysisMetrics.replaceChildren(
     ...metrics.map((metric) => {
@@ -706,7 +704,7 @@ function buildParcelQuery(toolKey, geography = selectedGeography) {
   };
 }
 
-async function loadGeographyParcels(toolKey, geography, signal) {
+async function loadGeographyParcelIds(toolKey, geography, signal) {
   const idQuery = buildParcelQuery(toolKey, geography);
   const idParams = new URLSearchParams(idQuery.options.body);
   idParams.delete("outFields");
@@ -728,18 +726,23 @@ async function loadGeographyParcels(toolKey, geography, signal) {
     throw new Error(idPayload.error?.message || `Parcel service returned ${idResponse.status}.`);
   }
 
-  const objectIds = idPayload.objectIds || [];
+  return idPayload.objectIds || [];
+}
+
+async function loadGeographyParcels(toolKey, geography, signal, objectIds = null) {
+  const idQuery = buildParcelQuery(toolKey, geography);
+  const parcelIds = objectIds || await loadGeographyParcelIds(toolKey, geography, signal);
   const features = [];
   const batchSize = 500;
 
-  for (let start = 0; start < objectIds.length; start += batchSize) {
+  for (let start = 0; start < parcelIds.length; start += batchSize) {
     const batchParams = new URLSearchParams(idQuery.options.body);
     batchParams.delete("geometry");
     batchParams.delete("geometryType");
     batchParams.delete("inSR");
     batchParams.delete("spatialRel");
     batchParams.delete("where");
-    batchParams.set("objectIds", objectIds.slice(start, start + batchSize).join(","));
+    batchParams.set("objectIds", parcelIds.slice(start, start + batchSize).join(","));
     batchParams.set("returnGeometry", "true");
     batchParams.set("outSR", "4326");
     batchParams.set("f", "geojson");
@@ -765,6 +768,85 @@ async function loadGeographyParcels(toolKey, geography, signal) {
     type: "FeatureCollection",
     features,
   };
+}
+
+function parcelAggregateRequest(toolKey, geography, statistic) {
+  const query = buildParcelQuery(toolKey, geography);
+  const params = query.options.body
+    ? new URLSearchParams(query.options.body)
+    : new URL(query.url).searchParams;
+  params.delete("outFields");
+  params.delete("outSR");
+  params.delete("resultRecordCount");
+  params.set("returnGeometry", "false");
+  params.set("outStatistics", JSON.stringify([statistic]));
+  params.set("f", "json");
+
+  if (query.options.body) {
+    return { url: query.url, options: { method: "POST", body: params } };
+  }
+  return { url: `${query.url.split("?")[0]}?${params.toString()}`, options: {} };
+}
+
+async function loadParcelStatistic(toolKey, geography, field, signal, statisticType = "sum", multiplier = 1) {
+  const statisticName = field === "NFMLNDVL" ? "landValue" : "totalValue";
+  const query = parcelAggregateRequest(toolKey, geography, {
+    statisticType,
+    onStatisticField: field,
+    outStatisticFieldName: statisticName,
+  });
+  const response = await fetch(query.url, {
+    ...query.options,
+    signal,
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json();
+
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
+  }
+  const value = payload.features?.[0]?.attributes?.[statisticName];
+  return value === null || value === undefined ? null : Number(value) * multiplier;
+}
+
+async function loadTaxMetrics(geography, parcelCount, signal, updateStatus) {
+  const summary = { landValue: null, totalValue: null, landValueRatio: null };
+
+  try {
+    updateStatus("Calculating total land value…");
+    summary.landValue = await loadParcelStatistic("tax", geography, "NFMLNDVL", signal);
+    updateAnalysisMetrics("tax", summary);
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    console.warn("Could not calculate total land value:", error);
+  }
+
+  try {
+    updateStatus("Calculating total overall value…");
+    // The statewide layer can overflow its integer accumulator when summing
+    // full values directly. Average × matching parcel count is equivalent here
+    // because the tax filter requires NFMTTLVL > 0 for every matching parcel.
+    summary.totalValue = await loadParcelStatistic(
+      "tax",
+      geography,
+      "NFMTTLVL",
+      signal,
+      "avg",
+      parcelCount,
+    );
+    updateAnalysisMetrics("tax", summary);
+    updateStatus("Calculating land-to-total ratio…");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (Number.isFinite(summary.landValue) && summary.totalValue > 0) {
+      summary.landValueRatio = (summary.landValue / summary.totalValue) * 100;
+    }
+    updateAnalysisMetrics("tax", summary);
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    console.warn("Could not calculate total overall value:", error);
+  }
+
+  return summary;
 }
 
 function createParcelStyle(toolKey) {
@@ -847,7 +929,9 @@ function renderParcels(geojson, toolKey, geography = null) {
 
   const count = geojson.features?.length || 0;
   elements.parcelCount.textContent = count.toLocaleString();
-  updateAnalysisMetrics(toolKey, geojson);
+  // Recalculate from the rendered features so the final values honor the
+  // center-in-boundary check used by selected-geography results.
+  updateAnalysisMetrics(toolKey, summarizeParcels(geojson));
   updateMapStatus(
     geography
       ? `${count.toLocaleString()} parcels shown for ${formatGeographyName(geography)}`
@@ -869,20 +953,44 @@ async function loadParcels() {
   updateAnalysisMetrics(toolAtRequestStart);
   setStatus(
     geographyAtRequestStart
-      ? `Querying parcels for ${formatGeographyName(geographyAtRequestStart)}…`
+      ? `Counting parcels for ${formatGeographyName(geographyAtRequestStart)}…`
       : "Querying parcels in the current map view…",
     "loading",
   );
-  updateMapStatus("Loading parcel boundaries…");
+  updateMapStatus(
+    geographyAtRequestStart ? "Counting matching parcels…" : "Loading parcel boundaries…",
+  );
 
   try {
     let payload;
     let queryWasTruncated = false;
     if (geographyAtRequestStart) {
+      const objectIds = await loadGeographyParcelIds(
+        toolAtRequestStart,
+        geographyAtRequestStart,
+        request.signal,
+      );
+      elements.parcelCount.textContent = objectIds.length.toLocaleString();
+
+      if (toolAtRequestStart === "tax") {
+        await loadTaxMetrics(
+          geographyAtRequestStart,
+          objectIds.length,
+          request.signal,
+          (message) => {
+            setStatus(message, "loading");
+            updateMapStatus(message);
+          },
+        );
+      }
+
+      setStatus("Loading parcel boundaries…", "loading");
+      updateMapStatus("Loading parcel boundaries…");
       payload = await loadGeographyParcels(
         toolAtRequestStart,
         geographyAtRequestStart,
         request.signal,
+        objectIds,
       );
     } else {
       const query = buildParcelQuery(toolAtRequestStart, geographyAtRequestStart);
