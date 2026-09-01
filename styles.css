@@ -212,6 +212,11 @@ h1 {
   box-shadow: 0 8px 22px rgba(30, 49, 41, 0.1);
 }
 
+.selection-menu--county-districts {
+  max-height: min(52vh, 430px);
+  overflow-y: auto;
+}
+
 .selection-menu label {
   display: block;
   margin-bottom: 6px;
@@ -633,6 +638,84 @@ h2 {
   pointer-events: none;
 }
 
+.acknowledgements {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  z-index: 400;
+}
+
+.acknowledgements-trigger {
+  padding: 8px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.9);
+  box-shadow: 0 5px 18px rgba(23, 33, 29, 0.11);
+  color: #53635b;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.acknowledgements-trigger:hover,
+.acknowledgements-trigger:focus-visible {
+  border-color: rgba(20, 107, 87, 0.46);
+  color: var(--green-dark);
+  outline: none;
+}
+
+.acknowledgements-popover {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 0;
+  width: 285px;
+  max-height: 30vh;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-y: auto;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(5px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.acknowledgements:hover .acknowledgements-popover,
+.acknowledgements:focus-within .acknowledgements-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.acknowledgements-popover strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.acknowledgements-popover p {
+  margin: 0 0 6px;
+}
+
+.acknowledgements-popover ul {
+  margin: 0;
+  padding-left: 17px;
+}
+
+.acknowledgements-popover li + li {
+  margin-top: 4px;
+}
+
+.acknowledgements-popover a {
+  color: var(--green-dark);
+  font-weight: 700;
+}
+
 .parcel-tooltip {
   color: var(--ink);
   font-size: 12px;
@@ -698,5 +781,14 @@ h2 {
     top: 14px;
     right: 14px;
     bottom: auto;
+  }
+
+  .acknowledgements {
+    bottom: 14px;
+    left: 14px;
+  }
+
+  .acknowledgements-popover {
+    width: min(285px, calc(100vw - 28px));
   }
 }

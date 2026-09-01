@@ -1363,6 +1363,7 @@ elements.geographyTypeSelect.addEventListener("change", () => {
   elements.geographySelection.textContent = "All Maryland";
   elements.selectedGeography.textContent = "All Maryland";
   loadGeographyChoices(elements.geographyTypeSelect.value);
+  elements.geographyMenu.classList.toggle("selection-menu--county-districts", elements.geographyTypeSelect.value === "countyCouncil");
 
   if (activeTool) {
     const config = TOOL_CONFIG[activeTool];
