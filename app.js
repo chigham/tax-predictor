@@ -1190,11 +1190,6 @@ async function calculateHypotheticalTax(event) {
       groupedParcels = new Map([["Unknown county", loadedTaxParcels.features]]);
     }
 
-    const heading = document.createElement("p");
-    heading.className = "tax-model-results-heading";
-    heading.textContent = "Projected revenue by county";
-    elements.taxModelCountyResults.append(heading);
-
     [...groupedParcels.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([county, parcels], index) => {
       const row = document.createElement("div");
       row.className = "tax-model-county-row";
