@@ -307,6 +307,7 @@ const elements = {
   improvementTaxRate: document.querySelector("#improvement-tax-rate"),
   taxModelResult: document.querySelector("#tax-model-result"),
   hypotheticalTaxValue: document.querySelector("#hypothetical-tax-value"),
+  taxModelCountyResults: document.querySelector("#tax-model-county-results"),
   mapStatus: document.querySelector("#map-status-text"),
   closeTool: document.querySelector("#close-tool"),
   refreshParcels: document.querySelector("#refresh-parcels"),
@@ -418,6 +419,8 @@ function clearParcelResults() {
   elements.taxModelControls.hidden = true;
   elements.taxModelResult.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
+  elements.taxModelCountyResults.replaceChildren();
+  elements.taxModelCountyResults.hidden = true;
   elements.parcelCount.textContent = "—";
   updateAnalysisMetrics(activeTool);
   elements.refreshParcels.disabled = true;
@@ -790,6 +793,46 @@ function pointInGeometry(point, geometry) {
   );
 }
 
+let countyBoundaryFeaturesPromise = null;
+
+async function loadCountyBoundaryFeatures() {
+  if (!countyBoundaryFeaturesPromise) {
+    const params = new URLSearchParams({ where: "1=1", outFields: "COUNTY", returnGeometry: "true", outSR: "4326", f: "geojson" });
+    countyBoundaryFeaturesPromise = fetch(`${COUNTY_BOUNDARY_SERVICE_URL}/query?${params.toString()}`, {
+      headers: { Accept: "application/geo+json, application/json" },
+    }).then(async (response) => {
+      const payload = await response.json();
+      if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
+        throw new Error(payload.error?.message || `County service returned ${response.status}.`);
+      }
+      const counties = new Map();
+      (payload.features || []).filter((feature) => feature.geometry && feature.properties?.COUNTY).forEach((feature) => {
+        const county = countyKeyFromStateName(feature.properties.COUNTY);
+        const polygons = feature.geometry.type === "Polygon" ? [feature.geometry.coordinates] : feature.geometry.type === "MultiPolygon" ? feature.geometry.coordinates : [];
+        if (!county || !polygons.length) return;
+        const existing = counties.get(county);
+        if (existing) existing.geometry.coordinates.push(...polygons);
+        else counties.set(county, { type: "Feature", properties: { COUNTY: county }, geometry: { type: "MultiPolygon", coordinates: [...polygons] } });
+      });
+      return [...counties.values()];
+    }).catch((error) => { countyBoundaryFeaturesPromise = null; throw error; });
+  }
+  return countyBoundaryFeaturesPromise;
+}
+
+async function groupParcelsByCounty(features) {
+  const counties = await loadCountyBoundaryFeatures();
+  const groupedParcels = new Map();
+  features.forEach((feature) => {
+    const center = geometryCenter(feature.geometry);
+    const countyFeature = center && counties.find((county) => pointInGeometry(center, county.geometry));
+    const county = countyFeature?.properties?.COUNTY || "Unknown county";
+    if (!groupedParcels.has(county)) groupedParcels.set(county, []);
+    groupedParcels.get(county).push(feature);
+  });
+  return groupedParcels;
+}
+
 function webMercatorPoint([longitude, latitude]) {
   const earthRadius = 20037508.34;
   const x = (longitude * earthRadius) / 180;
@@ -1103,17 +1146,17 @@ function renderParcels(geojson, toolKey, geography = null) {
 }
 
 function prepareTaxModelControls() {
-  if (activeTool !== "tax" || !loadedTaxParcels || !Number.isFinite(currentTaxRate)) return;
-  const defaultRate = (currentTaxRate * 100).toFixed(2);
-  elements.landTaxRate.value = defaultRate;
-  elements.improvementTaxRate.value = defaultRate;
+  if (activeTool !== "tax" || !loadedTaxParcels) return;
+  const defaultRate = (Number.isFinite(currentTaxRate) ? currentTaxRate : 0.01) * 100;
+  elements.landTaxRate.value = defaultRate.toFixed(2);
+  elements.improvementTaxRate.value = defaultRate.toFixed(2);
   elements.taxModelResult.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
   elements.taxModelControls.hidden = false;
 }
 
 // Is this optimized?
-function calculateHypotheticalTax(event) {
+async function calculateHypotheticalTax(event) {
   event.preventDefault();
   if (!loadedTaxParcels) return;
 
@@ -1134,7 +1177,44 @@ function calculateHypotheticalTax(event) {
   }, 0);
 
   elements.hypotheticalTaxValue.textContent = formatCompactCurrency(hypotheticalRevenue);
-  elements.taxModelResult.hidden = false;
+  const geographyType = elements.geographyTypeSelect.value;
+  if (geographyType === "assembly" || geographyType === "congressional") {
+    elements.taxModelResult.hidden = true;
+    elements.taxModelCountyResults.replaceChildren();
+    elements.taxModelCountyResults.hidden = false;
+    let groupedParcels;
+    try {
+      groupedParcels = await groupParcelsByCounty(loadedTaxParcels.features);
+    } catch (error) {
+      console.warn("Could not assign parcels to counties:", error);
+      groupedParcels = new Map([["Unknown county", loadedTaxParcels.features]]);
+    }
+
+    const heading = document.createElement("p");
+    heading.className = "tax-model-results-heading";
+    heading.textContent = "Projected revenue by county";
+    elements.taxModelCountyResults.append(heading);
+
+    [...groupedParcels.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([county, parcels], index) => {
+      const row = document.createElement("div");
+      row.className = "tax-model-county-row";
+      row.innerHTML = `<span>${escapeHtml(county)}</span><strong>Calculating…</strong>`;
+      elements.taxModelCountyResults.append(row);
+      setTimeout(() => {
+        const revenue = parcels.reduce((total, feature) => {
+          const properties = feature.properties || {};
+          const landValue = Number(properties.NFMLNDVL);
+          const improvementValue = Number(properties.NFMIMPVL);
+          return total
+            + (Number.isFinite(landValue) ? landRate * landValue : 0)
+            + (Number.isFinite(improvementValue) ? improvementRate * improvementValue : 0);
+        }, 0);
+        row.querySelector("strong").textContent = formatCompactCurrency(revenue);
+      }, index * 120);
+    });
+  } else {
+    elements.taxModelResult.hidden = false;
+  }
   setStatus("Hypothetical tax calculated from the loaded parcels.", "success");
 }
 
@@ -1151,6 +1231,8 @@ async function loadParcels() {
   currentTaxRate = null;
   elements.taxModelControls.hidden = true;
   elements.taxModelResult.hidden = true;
+  elements.taxModelCountyResults.replaceChildren();
+  elements.taxModelCountyResults.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
   elements.refreshParcels.disabled = true;
   updateAnalysisMetrics(toolAtRequestStart);
