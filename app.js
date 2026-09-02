@@ -4,30 +4,30 @@ const STATE_CENTER = [39.2, -76.7];
 const STATE_ZOOM = 8;
 const MAX_PARCELS_PER_REQUEST = 1000;
 const COUNTY_TAX_RATES = {
-  "Allegany County": 0.01,
-  "Anne Arundel County": 0.01,
-  "Baltimore City": 0.01,
-  "Baltimore County": 0.01,
-  "Calvert County": 0.01,
-  "Caroline County": 0.01,
-  "Carroll County": 0.01,
-  "Cecil County": 0.01,
-  "Charles County": 0.01,
-  "Dorchester County": 0.01,
-  "Frederick County": 0.01,
-  "Garrett County": 0.01,
-  "Harford County": 0.01,
-  "Howard County": 0.01,
-  "Kent County": 0.01,
-  "Montgomery County": 0.01,
-  "Prince George's County": 0.01,
-  "Queen Anne's County": 0.01,
-  "Somerset County": 0.01,
-  "St. Mary's County": 0.01,
-  "Talbot County": 0.01,
-  "Washington County": 0.01,
-  "Wicomico County": 0.01,
-  "Worcester County": 0.01,
+  "Allegany County": {"base": 0.00975, "municipalities":{"Barton": 0.009133, "Cumberland": 0.008195, "Frostburg": 0.00861, "Lonaconing": 0.008756, "Luke": 0.008752, "Midland": 0.009133, "Westernport": 0.009133}},  // varies by municipality
+  "Anne Arundel County": {"base": 0.00968, "municipalities":{"Annapolis": 0.00577, "Highland Beach": 0.00938}},  // varies by municipality
+  "Baltimore City": {"base": 0.02248, "municipalities":{}},
+  "Baltimore County": {"base": 0.011, "municipalities":{}},
+  "Calvert County": {"base": 0.00967, "municipalities":{"Chesapeake Beach": 0.00605, "North Beach": 0.00605}},  // 0.00605 in municipalities
+  "Caroline County": {"base": 0.0096, "municipalities":{"Denton": 0.009, "Federalsburg": 0.0088, "Greensboro": 0.009, "Preston": 0.0095, "Ridgely": 0.0091}},  // varies by municipality
+  "Carroll County": {"base": 0.01018, "municipalities":{}},
+  "Cecil County": {"base": 0.009724, "municipalities":{}},
+  "Charles County": {"base": 0.01141, "municipalities":{"Indian Head": 0.01112, "La Plata": 0.01023}},  // varies by municipality
+  "Dorchester County": {"base": 0.0103, "municipalities":{"Cambridge": 0.009567, "Hurlock": 0.009479}},  // varies in two municipalities
+  "Frederick County": {"base": 0.0111, "municipalities":{"Frederick": 0.010125, "Myersville": 0.009666}},  // varies in two municipalities
+  "Garrett County": {"base": 0.01, "municipalities":{"Mountain Lake Park": 0.009476}},  // varies in one municipality
+  "Harford County": {"base": 0.009779, "municipalities":{"Aberdeen": 0.008413, "Bel Air": 0.008413, "Havre de Grace": 0.008413}},  // 0.008413 in municipalities
+  "Howard County": {"base": 0.01044, "municipalities":{}},
+  "Kent County": {"base": 0.01022, "municipalities":{}},
+  "Montgomery County": {"base": 0.007176, "municipalities":{}},  // 0.6706% (base rate) + 0.047% (MCPS-designated)
+  "Prince George's County": {"base": 0.01, "municipalities":{"Berwyn Heights": 0.00867, "Bladensburg": 0.00875, "Bowie": 0.00878, "Brentwood": 0.00919, "Capital Heights": 0.00908, "Cheverly": 0.00902, "College Park": 0.00968, "Colmar Manor": 0.00903, "Cottage City": 0.00929, "District Heights": 0.00923, "Eagle Harbor": 0.00999, "Edmonston": 0.00908, "Fairmount Heights": 0.00937, "Forest Heights": 0.00893, "Glenarden": 0.00892, "Greenbelt": 0.00875, "Hyattsville": 0.00884, "Landover Hills": 0.00907, "Laurel": 0.00867, "Morningside": 0.00909, "Mount Rainier": 0.00879, "New Carrollton": 0.00886, "North Brentwood": 0.0098, "Riverdale Park": 0.00882, "Seat Pleasant": 0.00885, "University Park": 0.00881, "Upper Marlboro": 0.0093}},  // varies by municipality
+  "Queen Anne's County": {"base": 0.008, "municipalities":{"Centreville": 0.0067, "Millington": 0.00715}},  // varies in two municipalities
+  "Somerset County": {"base": 0.01, "municipalities":{}},
+  "St. Mary's County": {"base": 0.009278, "municipalities":{}},  // 0.8478% (base rate) + 0.056% (fire) + 0.024% (supplemental services)
+  "Talbot County": {"base": 0.00818, "municipalities":{"Easton": 0.00685, "Oxford": 0.007, "Queen Anne": 0.007579, "St. Michaels": 0.00691, "Trappe": 0.0072}},  // varies by municipality
+  "Washington County": {"base": 0.00928, "municipalities":{"Boonsboro": 0.00803, "Clear Spring": 0.00803, "Funkstown": 0.00803, "Hagerstown": 0.00803, "Hancock": 0.00803, "Keedysville": 0.00803, "Sharpsburg": 0.00803, "Smithsburg": 0.00803, "Williamsport": 0.00803}},  // 0.00803 in municipalities
+  "Wicomico County": {"base": 0.007799, "municipalities":{}},
+  "Worcester County": {"base": 0.00815, "municipalities":{}},
 };
 const COUNTY_BOUNDARY_SERVICE_URL =
   "https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_PoliticalBoundaries/FeatureServer/1";
@@ -785,7 +785,7 @@ async function resolveCountyTaxRate(geographyType, geography, signal) {
     }
   }
 
-  return countyKey ? COUNTY_TAX_RATES[countyKey] ?? null : null;
+  return countyKey ? COUNTY_TAX_RATES["base"][countyKey] ?? null : null;
 }
 
 function pointInRing(point, ring) {
