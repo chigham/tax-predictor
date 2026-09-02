@@ -447,6 +447,9 @@ function showTool(toolKey) {
     : "All Maryland";
   elements.parcelCount.textContent = "—";
   elements.taxModelControls.hidden = true;
+  elements.underutilizedControl.hidden = true;
+  elements.underutilizedSelect.value = "";
+  underutilizedMode = "";
   elements.taxModelResult.hidden = true;
   updateAnalysisMetrics(toolKey);
   updateZoomMetric();
@@ -1294,6 +1297,9 @@ async function loadParcels() {
   loadedTaxParcels = null;
   currentTaxRate = null;
   elements.taxModelControls.hidden = true;
+  elements.underutilizedControl.hidden = true;
+  elements.underutilizedSelect.value = "";
+  underutilizedMode = "";
   elements.taxModelResult.hidden = true;
   elements.taxModelCountyResults.replaceChildren();
   elements.taxModelCountyResults.hidden = true;
