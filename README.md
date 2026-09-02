@@ -1,6 +1,6 @@
 # ParcelLens
 
-A vanilla HTML and JavaScript prototype for exploring Maryland parcels with two analysis entry points:
+The purpose of this web app is to help policy decision makers understand ADUs and tax models to spur housing and economic development at the county level through two types of analysis:
 
 - **ADU feasibility** — starts with developed residential and town-house parcels in the current map view.
 - **Tax model analyzer** — starts with parcels that have a positive appraised full value and have no exemption status.
