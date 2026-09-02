@@ -1176,8 +1176,14 @@ function prepareTaxModelControls() {
 }
 
 function isSingleFamilyParcel(properties) {
-  const text = `${properties.DESCLU || ""} ${properties.LU || ""}`.toLowerCase();
-  return /single[- ]family|sfh/.test(text);
+  const description = String(properties.DESCLU || "").toLowerCase();
+  if (/single[- ]family|single family detached|detached dwelling|sfh/.test(description)) return true;
+  const landUse = String(properties.LU || "").trim().toUpperCase();
+  const units = Number(properties.BLDG_UNITS);
+  return landUse === "R"  // Residential
+    && Number(properties.SQFTSTRC) > 0
+    && (!Number.isFinite(units) || units <= 1)  // Single-family
+    && !/townhouse|town house|attached|multifamily|multi-family|apartment/.test(description);
 }
 
 async function updateUnderutilizedHighlights() {
@@ -1215,7 +1221,7 @@ async function updateUnderutilizedHighlights() {
         : underutilizedMode === "high-value-urban"
           ? Number.isFinite(land) && land >= 1000000 && Number.isFinite(total) && land >= total / 2 && isUrban
           : underutilizedMode === "below-average-sfh"
-            ? !isSingleFamilyParcel(properties) && ratio !== null && averageSfhRatio !== null && ratio < averageSfhRatio
+            ? !isSingleFamilyParcel(properties) && ratio !== null && averageSfhRatio !== null && ratio > averageSfhRatio
             : false;
   });
   parcelLayer.setStyle((feature) => {
