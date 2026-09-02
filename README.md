@@ -66,3 +66,19 @@ AI recommendations:
 3. Add the assessment-year, tax-rate, exemption, and scenario inputs needed by the tax model. ==tax rate high priority (see C's wish list #3); others probably not, as the exemption factors are very specific to individual parcels and are not available programmatically or in batches==
 4. Add a small backend proxy if deployment or the GIS service's CORS policy requires one. ==yes, especially if this applies to Howard County Council districts (see C's wish list #2)==
 5. Add tests around query construction and data formatting before expanding the analysis logic. ==good idea==
+
+## Run locally
+
+From the project folder, use either option:
+
+1. Start a local server:
+
+    ```
+    npx serve .
+    ```
+
+    Open the local URL shown in the terminal.
+
+2. Open `index.html` directly in a browser.
+
+The local server is recommended because some browser security settings may restrict requests to the remote GIS data services when the file is opened directly.
