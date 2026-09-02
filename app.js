@@ -215,6 +215,14 @@ const GEOGRAPHY_CONFIG = {
         formatChoice: () => "At-large",
       },
       {
+        county: "Washington County",
+        serviceUrl: COUNTY_BOUNDARY_SERVICE_URL,
+        where: "COUNTY = 'Washington'",
+        valueField: "COUNTY",
+        outFields: "COUNTY",
+        formatChoice: () => "At-large",
+      },
+      {
         county: "Wicomico County",
         serviceUrl: "https://gisapps.wicomicocounty.org/server/rest/services/CouncilmanisAdoptedDec2_2025/MapServer/7",
         valueField: "DISTRICT",
