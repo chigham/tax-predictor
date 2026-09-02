@@ -321,6 +321,8 @@ const elements = {
   analysisMenu: document.querySelector("#analysis-menu"),
   analysisSelection: document.querySelector("#analysis-selection"),
   analysisSelect: document.querySelector("#analysis-select"),
+  underutilizedControl: document.querySelector("#underutilized-control"),
+  underutilizedSelect: document.querySelector("#underutilized-select"),
   selectedGeography: document.querySelector("#selected-geography"),
 };
 
@@ -333,6 +335,8 @@ let geographyLoadRequest = null;
 let currentRequest = null;
 let currentTaxRate = null;
 let loadedTaxParcels = null;
+let underutilizedMode = "";
+let urbanFeaturesPromise = null;
 
 function setStatus(message, state = "ready") {
   elements.statusMessage.textContent = message;
@@ -415,6 +419,9 @@ function clearParcelResults() {
     parcelLayer = null;
   }
   loadedTaxParcels = null;
+  underutilizedMode = "";
+  elements.underutilizedSelect.value = "";
+  elements.underutilizedControl.hidden = true;
   currentTaxRate = null;
   elements.taxModelControls.hidden = true;
   elements.taxModelResult.hidden = true;
@@ -1119,7 +1126,16 @@ function renderParcels(geojson, toolKey, geography = null) {
   }
 
   parcelLayer = L.geoJSON(geojson, {
-    style: createParcelStyle(toolKey),
+    style: (feature) => {
+      const style = createParcelStyle(toolKey);
+      if (toolKey === "tax" && underutilizedMode && feature.properties?.underutilizedMatch) {
+        style.color = "#e56b2f";
+        style.fillColor = "#f4a261";
+        style.weight = 2.5;
+        style.fillOpacity = 0.58;
+      }
+      return style;
+    },
     onEachFeature: (feature, layer) => {
       layer.bindPopup(popupMarkup(feature.properties || {}), {
         className: "parcel-tooltip",
@@ -1153,6 +1169,59 @@ function prepareTaxModelControls() {
   elements.taxModelResult.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
   elements.taxModelControls.hidden = false;
+  elements.underutilizedControl.hidden = false;
+}
+
+function isSingleFamilyParcel(properties) {
+  const text = `${properties.DESCLU || ""} ${properties.LU || ""}`.toLowerCase();
+  return /single[- ]family|sfh/.test(text);
+}
+
+async function updateUnderutilizedHighlights() {
+  if (!loadedTaxParcels || !parcelLayer) return;
+  if (underutilizedMode === "high-value-urban" && !urbanFeaturesPromise) {
+    const params = new URLSearchParams({ where: "1=1", outFields: "*", returnGeometry: "true", outSR: "4326", f: "geojson" });
+    urbanFeaturesPromise = fetch("https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_CensusStatisticalBoundaries/FeatureServer/4/query?" + params)
+      .then((response) => response.json())
+      .then((payload) => {
+        if (payload.error || payload.type !== "FeatureCollection") throw new Error("Urban-area service returned an invalid response.");
+        return payload.features || [];
+      }).catch((error) => { urbanFeaturesPromise = null; throw error; });
+  }
+  const urbanFeatures = underutilizedMode === "high-value-urban" ? await urbanFeaturesPromise : [];
+  const features = loadedTaxParcels.features;
+  const valid = features.map((feature) => {
+    const properties = feature.properties || {};
+    const land = Number(properties.NFMLNDVL);
+    const total = Number(properties.NFMTTLVL);
+    const improvement = Number(properties.NFMIMPVL);
+    const ratio = Number.isFinite(land) && Number.isFinite(total) && total > 0 ? land / total : null;
+    return { feature, properties, land, total, improvement, ratio };
+  });
+  const sfh = valid.filter((item) => isSingleFamilyParcel(item.properties) && item.ratio !== null);
+  const averageSfhRatio = sfh.length ? sfh.reduce((sum, item) => sum + item.ratio, 0) / sfh.length : null;
+  valid.forEach((item) => {
+    const { properties, land, total, improvement, ratio } = item;
+    const vacant = Number.isFinite(improvement) ? improvement === 0 : Number.isFinite(land) && Number.isFinite(total) && land === total;
+    const center = geometryCenter(item.feature.geometry);
+    const isUrban = center && urbanFeatures.some((urban) => urban.geometry && pointInGeometry(center, urban.geometry));
+    properties.underutilizedMatch = underutilizedMode === "vacant"
+      ? vacant
+      : underutilizedMode === "land-majority"
+        ? Number.isFinite(land) && Number.isFinite(total) && land >= total / 2
+        : underutilizedMode === "high-value-urban"
+          ? Number.isFinite(land) && land >= 1000000 && Number.isFinite(total) && land >= total / 2 && isUrban
+          : underutilizedMode === "below-average-sfh"
+            ? !isSingleFamilyParcel(properties) && ratio !== null && averageSfhRatio !== null && ratio < averageSfhRatio
+            : false;
+  });
+  parcelLayer.setStyle((feature) => {
+    const style = createParcelStyle("tax");
+    if (underutilizedMode && feature.properties?.underutilizedMatch) {
+      style.color = "#e56b2f"; style.fillColor = "#f4a261"; style.weight = 2.5; style.fillOpacity = 0.58;
+    }
+    return style;
+  });
 }
 
 // Is this optimized?
@@ -1411,6 +1480,14 @@ elements.analysisSelect.addEventListener("change", () => {
   elements.analysisMenu.hidden = true;
   elements.analysisToggle.setAttribute("aria-expanded", "false");
   showTool(toolKey);
+});
+
+elements.underutilizedSelect.addEventListener("change", () => {
+  underutilizedMode = elements.underutilizedSelect.value;
+  updateUnderutilizedHighlights().catch((error) => {
+    console.warn("Could not apply underutilized parcel highlight:", error);
+    setStatus("Could not load the urban-area boundary.", "error");
+  });
 });
 
 elements.closeTool.addEventListener("click", closeTool);

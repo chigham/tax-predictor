@@ -73,6 +73,16 @@
               </select>
             </div>
           </div>
+          <div id="underutilized-control" class="selection-control underutilized-control" hidden>
+            <label class="underutilized-label" for="underutilized-select">Underutilized parcel view</label>
+            <select id="underutilized-select" class="underutilized-select">
+              <option value="">Show all loaded parcels</option>
+              <option value="vacant">No improvements or vacant</option>
+              <option value="land-majority">Land &gt; improvements</option>
+              <option value="high-value-urban">HIGH VALUE land &gt; improvements</option>
+              <option value="below-average-sfh">Land:total &gt; average SFH</option>
+            </select>
+          </div>
         </div>
         <p class="data-note"><span class="live-dot" aria-hidden="true"></span> Parcels provided by Maryland iMAP</p>
       </section>

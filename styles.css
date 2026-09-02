@@ -254,6 +254,34 @@ h1 {
   line-height: 1.4;
 }
 
+.underutilized-control {
+  margin-top: 2px;
+  padding: 11px 12px;
+  border: 1px solid rgba(201, 152, 61, 0.28);
+  border-radius: 12px;
+  background: rgba(255, 253, 248, 0.72);
+}
+
+.underutilized-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.underutilized-select {
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+}
+
 .tool-icon--analysis {
   background: #f7ecd5;
   color: #8b671c;
