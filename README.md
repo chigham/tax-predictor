@@ -21,6 +21,12 @@ The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap til
 - Compact tax metrics include land value, overall assessed value, land-to-total ratio, and estimated current county tax revenue.
 - County, municipality, and county council / commissioner selections use the temporary `COUNTY_TAX_RATES` table in `app.js`, currently set to 1% for every Maryland county and Baltimore City.
 - The tax model analyzer exposes hypothetical split-rate results for separate land and improvements inputs after parcel loading. The modeled result is calculated only after submission as the parcel-level sum of land value × land rate plus improvement value × improvement rate.
+- After tax parcels load, the welcome panel provides an specific parcel subset viewer that highlight different ways to identify  underutilized properties. It cosmetically highlights non-exempt parcels that meet one of the following sets of underutilization criteria:
+    - no improvements or vacant land, 
+    - land value at least half of total assessed value, or land-dominant, 
+    - high-value land-dominant parcels, where land value is at least $1 million, in urban areas, 
+    - non-single-family parcels whose land-to-total ratio exceeds the developed single-family benchmark for the selected geography. 
+All options inherit the tax filter's `EXCLASS IS NULL` exclusion.
 - REST `query` requests constrained to the current map extent or selected geography. ==This needs to be verified. Current map view is not the desired method.==
 - Selected-geography requests first retrieve matching object IDs, then fetch parcel geometry in batches to avoid the service's transfer limit. ==This needs to be verified, especially what is meant by "matching object IDs". Is it looking for a field in the parcels that matches the selected geography, or is it just grabbing unique object IDs that fall within the geography?==
 - Parcel results are reduced to parcels whose calculated centers fall within the selected geography shape.
