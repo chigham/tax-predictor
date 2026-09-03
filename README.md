@@ -59,6 +59,7 @@ Christopher's wish list:
 3. Customize the actual base tax rates by county so they are not all just 1%.
 4. Optimize optimize optimize. Especially loading parcel geometries if possible.
 5. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations.
+6. A second button in the split-rate scenario next to "Calculate scenario" which allows the user to toggle between the basic popups and a custom one that compares the current expected county tax situation to the scenario with the user inputs.
 
 AI recommendations:
 1. Confirm the authoritative ADU eligibility rules and map each rule to available GIS fields or additional services. ==See C's wish list #5==
