@@ -4,6 +4,8 @@ const PARCEL_MAP_SERVICE_URL = PARCEL_LAYER_URL.replace(/\/0$/, "");
 const STATE_CENTER = [39.2, -76.7];
 const STATE_ZOOM = 8;
 const MAX_PARCELS_PER_REQUEST = 1000;
+const PARCEL_OUT_FIELDS =
+  "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN";
 const COUNTY_TAX_RATES = {
   "Allegany County": {"base": 0.00975, "municipalities":{"Barton": 0.009133, "Cumberland": 0.008195, "Frostburg": 0.00861, "Lonaconing": 0.008756, "Luke": 0.008752, "Midland": 0.009133, "Westernport": 0.009133}},  // varies by municipality
   "Anne Arundel County": {"base": 0.00968, "municipalities":{"Annapolis": 0.00577, "Highland Beach": 0.00938}},  // varies by municipality
@@ -369,6 +371,8 @@ let selectedGeography = null;
 let geographyLoadRequest = null;
 let currentRequest = null;
 let currentTaxRate = null;
+let taxScenario = null;
+let openParcelPopup = null;
 let loadedTaxParcels = null;
 let serverRenderedParcelLayer = false;
 let underutilizedMode = "";
@@ -454,8 +458,13 @@ function clearParcelResults() {
     map.removeLayer(parcelLayer);
     parcelLayer = null;
   }
+  if (openParcelPopup) {
+    openParcelPopup.popup.remove();
+    openParcelPopup = null;
+  }
   serverRenderedParcelLayer = false;
   loadedTaxParcels = null;
+  taxScenario = null;
   underutilizedMode = "";
   elements.underutilizedSelect.value = "";
   elements.underutilizedControl.hidden = true;
@@ -830,6 +839,14 @@ function taxRateForLocation(county, municipality) {
   return municipalityEntry?.[1] ?? countyRates.base;
 }
 
+function taxRateForParcel(properties) {
+  const county = COUNTY_BY_JURISDICTION[String(properties.JURSCODE || "").toUpperCase()];
+  const municipality = properties.TOWNCODE
+    ? municipalityNameFromParcelDescription(properties.DESCTOWN)
+    : null;
+  return taxRateForLocation(county, municipality);
+}
+
 function normalizeMunicipalityName(value) {
   return String(value || "")
     .trim()
@@ -1013,12 +1030,60 @@ function serverParcelExportRequest(toolKey, geography) {
   };
 }
 
+async function loadParcelAtPoint(toolKey, latlng, signal) {
+  const params = new URLSearchParams({
+    where: TOOL_CONFIG[toolKey].where,
+    geometry: `${latlng.lng},${latlng.lat}`,
+    geometryType: "esriGeometryPoint",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields: PARCEL_OUT_FIELDS,
+    returnGeometry: "false",
+    resultRecordCount: "1",
+    f: "geojson",
+  });
+  const response = await fetch(`${PARCEL_LAYER_URL}/query?${params.toString()}`, {
+    signal,
+    headers: { Accept: "application/geo+json, application/json" },
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
+    throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
+  }
+  return payload.features?.[0] || null;
+}
+
 function createServerRenderedParcelLayer(toolKey, geography) {
   const layer = L.layerGroup();
   let refreshTimer = null;
   let refreshRequest = null;
+  let parcelClickRequest = null;
   let pendingRefreshResolve = null;
   let imageOverlay = null;
+
+  const handleMapClick = async (event) => {
+    if (geography && !pointInGeometry([event.latlng.lng, event.latlng.lat], geography.geometry)) return;
+    if (parcelClickRequest) parcelClickRequest.abort();
+    const request = new AbortController();
+    parcelClickRequest = request;
+
+    try {
+      const feature = await loadParcelAtPoint(toolKey, event.latlng, request.signal);
+      if (!feature || parcelClickRequest !== request || !map.hasLayer(layer)) return;
+      const popup = L.popup({ className: "parcel-tooltip", maxWidth: 280 })
+        .setLatLng(event.latlng)
+        .setContent(popupMarkup(feature.properties || {}, toolKey));
+      openParcelPopup = { popup, properties: feature.properties || {}, toolKey };
+      popup.once("remove", () => {
+        if (openParcelPopup?.popup === popup) openParcelPopup = null;
+      });
+      popup.openOn(map);
+    } catch (error) {
+      if (error.name !== "AbortError") console.warn("Could not load the selected parcel:", error);
+    } finally {
+      if (parcelClickRequest === request) parcelClickRequest = null;
+    }
+  };
 
   layer.refresh = () => new Promise((resolve, reject) => {
     if (pendingRefreshResolve) pendingRefreshResolve();
@@ -1066,14 +1131,17 @@ function createServerRenderedParcelLayer(toolKey, geography) {
   layer.on("add", () => {
     map.on("moveend", layer.refresh);
     map.on("zoomend", layer.refresh);
+    map.on("click", handleMapClick);
   });
   layer.on("remove", () => {
     if (pendingRefreshResolve) pendingRefreshResolve();
     pendingRefreshResolve = null;
     clearTimeout(refreshTimer);
     if (refreshRequest) refreshRequest.abort();
+    if (parcelClickRequest) parcelClickRequest.abort();
     map.off("moveend", layer.refresh);
     map.off("zoomend", layer.refresh);
+    map.off("click", handleMapClick);
     if (imageOverlay) {
       layer.removeLayer(imageOverlay);
       imageOverlay = null;
@@ -1094,8 +1162,7 @@ function buildParcelQuery(toolKey, geography = selectedGeography) {
     geometryType: geographyGeometry ? "esriGeometryPolygon" : "esriGeometryEnvelope",
     inSR: geographyGeometry ? "3857" : "4326",
     spatialRel: "esriSpatialRelIntersects",
-    outFields:
-      "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN",
+    outFields: PARCEL_OUT_FIELDS,
     returnGeometry: "true",
     outSR: "4326",
     resultRecordCount: String(MAX_PARCELS_PER_REQUEST),
@@ -1358,6 +1425,13 @@ function formatCurrency(value) {
     : "Not available";
 }
 
+function formatTaxRate(value) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(number * 100)}%`
+    : "Not available";
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -1367,7 +1441,30 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function popupMarkup(properties) {
+function taxPopupDetails(properties) {
+  const totalValue = Number(properties.NFMTTLVL);
+  const landValue = Number(properties.NFMLNDVL);
+  const improvementValue = Number(properties.NFMIMPVL);
+  const currentRate = taxRateForParcel(properties);
+  const currentTax = Number.isFinite(totalValue) && Number.isFinite(currentRate)
+    ? totalValue * currentRate
+    : null;
+  const hypotheticalParts = [
+    Number.isFinite(landValue) ? landValue * taxScenario?.landRate : null,
+    Number.isFinite(improvementValue) ? improvementValue * taxScenario?.improvementRate : null,
+  ].filter(Number.isFinite);
+  const hypotheticalTax = taxScenario
+    ? (hypotheticalParts.length ? hypotheticalParts.reduce((total, value) => total + value, 0) : null)
+    : currentTax;
+
+  return {
+    currentRate,
+    currentTax,
+    hypotheticalTax,
+  };
+}
+
+function popupMarkup(properties, toolKey = activeTool) {
   const address = [
     properties.STRTNUM,
     properties.STRTDIR,
@@ -1380,6 +1477,8 @@ function popupMarkup(properties) {
     .join(" ");
   const title = displayValue(properties.ADDRESS, address || "Selected parcel");
 
+  const taxDetails = toolKey === "tax" ? taxPopupDetails(properties) : null;
+
   return `
     <div class="parcel-popup">
       <h3>${escapeHtml(title)}</h3>
@@ -1391,8 +1490,25 @@ function popupMarkup(properties) {
         <dt>Improvement assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMIMPVL))} ${properties.NFMTTLVL ? `(${((properties.NFMIMPVL / properties.NFMTTLVL) * 100).toFixed(0)}%)` : ""}</dd>
         <dt>Total assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMTTLVL))} ${properties.NFMTTLVL ? `(100%)` : ""}</dd>
         <dt>Zone</dt><dd>${escapeHtml(displayValue(properties.ZONING))}</dd>
+        ${taxDetails ? `
+        <dt>Applicable tax rate</dt><dd>${escapeHtml(formatTaxRate(taxDetails.currentRate))}</dd>
+        <dt>Predicted tax bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.currentTax))}</dd>
+        <dt>Hypothetical split-rate bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.hypotheticalTax))}</dd>` : ""}
       </dl>
     </div>`;
+}
+
+function refreshOpenParcelPopup() {
+  if (openParcelPopup) {
+    openParcelPopup.popup.setContent(popupMarkup(openParcelPopup.properties, openParcelPopup.toolKey));
+    openParcelPopup.popup.update();
+  }
+  if (!parcelLayer || typeof parcelLayer.eachLayer !== "function") return;
+  parcelLayer.eachLayer((layer) => {
+    if (typeof layer.isPopupOpen === "function" && layer.isPopupOpen()) {
+      layer.setPopupContent(popupMarkup(layer.feature?.properties || {}, activeTool));
+    }
+  });
 }
 
 async function renderParcels(geojson, toolKey, geography = null, summary = null, countOverride = null) {
@@ -1420,11 +1536,12 @@ async function renderParcels(geojson, toolKey, geography = null, summary = null,
         return style;
       },
       onEachFeature: (feature, layer) => {
-        layer.bindPopup(popupMarkup(feature.properties || {}), {
+        layer.bindPopup(popupMarkup(feature.properties || {}, toolKey), {
           className: "parcel-tooltip",
           maxWidth: 280,
         });
         layer.on({
+          click: () => layer.setPopupContent(popupMarkup(feature.properties || {}, toolKey)),
           mouseover: (event) => event.target.setStyle({ weight: 2, fillOpacity: 0.48 }),
           mouseout: (event) => parcelLayer.resetStyle(event.target),
         });
@@ -1579,6 +1696,8 @@ async function calculateHypotheticalTax(event) {
     return;
   }
 
+  taxScenario = { landRate, improvementRate };
+
   let hypotheticalRevenue;
   if (serverRenderedParcelLayer) {
     setStatus("Calculating split-rate scenario…", "loading");
@@ -1638,6 +1757,7 @@ async function calculateHypotheticalTax(event) {
   } else {
     elements.taxModelResult.hidden = false;
   }
+  refreshOpenParcelPopup();
   setStatus("Hypothetical tax calculated from the loaded parcels.", "success");
 }
 
@@ -1650,8 +1770,13 @@ async function loadParcels() {
   if (currentRequest) currentRequest.abort();
   const request = new AbortController();
   currentRequest = request;
+  if (openParcelPopup) {
+    openParcelPopup.popup.remove();
+    openParcelPopup = null;
+  }
   loadedTaxParcels = null;
   currentTaxRate = null;
+  taxScenario = null;
   elements.taxModelControls.hidden = true;
   elements.underutilizedControl.hidden = true;
   elements.underutilizedSelect.value = "";
