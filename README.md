@@ -20,7 +20,7 @@ The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap til
 - Limited metrics for ADU feasibility (basically n for total number of single-family homes).
 - Compact tax metrics include land value, overall assessed value, land-to-total ratio, and estimated current county tax revenue.
 - County and municipality tax calculations use the temporary `COUNTY_TAX_RATES` table in `app.js`. Listed municipalities receive their municipality-specific rate; unlisted and unincorporated parcels use the county base rate. Split-rate scenarios use the user-entered rates uniformly across the selected parcels.
-- The tax model analyzer exposes hypothetical split-rate results for separate land and improvements inputs after parcel loading. Smaller selections use the loaded parcel values; large server-rendered selections use geometry-free ArcGIS aggregate statistics.
+- The tax model analyzer exposes hypothetical split-rate results for separate land and improvements inputs after parcel loading. Smaller selections use the loaded parcel values; large server-rendered selections use geometry-free ArcGIS aggregate statistics. This resolves a critical memory error in the browser when trying to load all leaflet parcels for large geographies like PG County.
 - After tax parcels load, the welcome panel provides an specific parcel subset viewer that highlight different ways to identify  underutilized properties. It cosmetically highlights non-exempt parcels that meet one of the following sets of underutilization criteria:
     - no improvements or vacant land, 
     - land value at least half of total assessed value, or land-dominant, 
