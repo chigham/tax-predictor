@@ -1019,10 +1019,15 @@ function serverParcelExportRequest(toolKey, geography) {
   });
   const geometry = geographyGeometryForExport(geography);
   if (geometry) {
-    params.set("geometry", JSON.stringify(geometry));
-    params.set("geometryType", "esriGeometryPolygon");
-    params.set("geometrySR", "4326");
-    params.set("spatialRel", "esriSpatialRelIntersects");
+    const polygonFilter = {
+      geometryType: "esriGeometryPolygon",
+      geometry,
+    };
+    params.set("spatialFilter", JSON.stringify({
+      ...polygonFilter,
+      spatialRel: "esriSpatialRelIntersects",
+    }));
+    params.set("clipping", JSON.stringify(polygonFilter));
   }
   return {
     url: `${PARCEL_MAP_SERVICE_URL}/export`,
