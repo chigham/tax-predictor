@@ -673,6 +673,13 @@ h2 {
   border-top: 1px solid rgba(201, 152, 61, 0.25);
 }
 
+.tax-model-breakdown-heading {
+  margin: 8px 0 3px;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .tax-model-county-row {
   display: flex;
   align-items: baseline;

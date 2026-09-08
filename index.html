@@ -118,6 +118,9 @@
           </div>
           <div id="analysis-metrics" class="metric-grid__dynamic"></div>
         </div>
+        <div id="tax-current-county-results" class="tax-model-county-results" hidden>
+          <p class="tax-model-breakdown-heading">Current tax by county</p>
+        </div>
         <form id="tax-model-controls" class="tax-model-controls" hidden>
           <p class="controls-heading">Split-rate scenario</p>
           <p class="controls-copy">Set separate land and improvement rates, then calculate projected annual revenue.</p>
@@ -139,7 +142,9 @@
             <span>Hypothetical tax</span>
             <strong id="hypothetical-tax-value">—</strong>
           </div>
-          <div id="tax-model-county-results" class="tax-model-county-results" hidden></div>
+          <div id="tax-model-county-results" class="tax-model-county-results" hidden>
+            <p class="tax-model-breakdown-heading">Hypothetical tax by county</p>
+          </div>
         </form>
         <button id="refresh-parcels" class="primary-action" type="button">
           <span>Refresh parcels in view</span>

@@ -18,7 +18,7 @@ The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap til
 - Selected statewide geography boundaries loaded from Maryland iMAP and highlighted on selection.
 - Tool-specific query definitions in `app.js`.
 - Limited metrics for ADU feasibility (basically n for total number of single-family homes).
-- Compact tax metrics include land value, overall assessed value, land-to-total ratio, and estimated current county tax revenue.
+- Compact tax metrics include land value, overall assessed value, land-to-total ratio, and estimated current county tax revenue. Multi-county district selections also show the current-tax breakdown by county.
 - Tax parcel popups include all existing parcel fields plus the applicable county or municipal rate, predicted current tax bill, and a hypothetical split-rate bill. Before a scenario is calculated, the hypothetical bill matches the predicted current bill; after calculation, it uses the entered land and improvement rates.
 - County and municipality tax calculations use the temporary `COUNTY_TAX_RATES` table in `app.js`. Listed municipalities receive their municipality-specific rate; unlisted and unincorporated parcels use the county base rate. Split-rate scenarios use the user-entered rates uniformly across the selected parcels.
 - The tax model analyzer exposes hypothetical split-rate results for separate land and improvements inputs after parcel loading. Smaller selections use the loaded parcel values; large server-rendered selections use geometry-free ArcGIS aggregate statistics. This resolves a critical memory error in the browser when trying to load all leaflet parcels for large geographies like PG County.

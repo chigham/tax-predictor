@@ -350,6 +350,7 @@ const elements = {
   calculateTaxModelLabel: document.querySelector("#calculate-tax-model-label"),
   taxModelResult: document.querySelector("#tax-model-result"),
   hypotheticalTaxValue: document.querySelector("#hypothetical-tax-value"),
+  taxCurrentCountyResults: document.querySelector("#tax-current-county-results"),
   taxModelCountyResults: document.querySelector("#tax-model-county-results"),
   mapStatus: document.querySelector("#map-status-text"),
   closeTool: document.querySelector("#close-tool"),
@@ -510,8 +511,10 @@ function clearParcelResults() {
   elements.taxModelControls.hidden = true;
   elements.taxModelResult.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
-  elements.taxModelCountyResults.replaceChildren();
+  resetTaxCountyResults(elements.taxModelCountyResults, "Hypothetical tax by county");
   elements.taxModelCountyResults.hidden = true;
+  resetTaxCountyResults(elements.taxCurrentCountyResults, "Current tax by county");
+  elements.taxCurrentCountyResults.hidden = true;
   elements.parcelCount.textContent = "—";
   updateAnalysisMetrics(activeTool);
   elements.refreshParcels.disabled = true;
@@ -906,6 +909,7 @@ function summarizeTaxParcels(geojson) {
 
   let taxRevenue = 0;
   let ratedParcels = 0;
+  const byCounty = new Map();
   geojson.features.forEach((feature) => {
     const properties = feature.properties || {};
     const county = COUNTY_BY_JURISDICTION[String(properties.JURSCODE || "").toUpperCase()];
@@ -915,11 +919,14 @@ function summarizeTaxParcels(geojson) {
     const rate = taxRateForLocation(county, municipality);
     const totalValue = Number(properties.NFMTTLVL);
     if (Number.isFinite(rate) && Number.isFinite(totalValue)) {
-      taxRevenue += totalValue * rate;
+      const countyRevenue = totalValue * rate;
+      taxRevenue += countyRevenue;
+      byCounty.set(county, (byCounty.get(county) || 0) + countyRevenue);
       ratedParcels += 1;
     }
   });
   summary.currentTaxRevenue = ratedParcels ? taxRevenue : null;
+  summary.currentTaxByCounty = byCounty;
   return summary;
 }
 
@@ -1397,6 +1404,7 @@ async function loadCurrentTaxRevenue(geography, signal) {
 
   let revenue = 0;
   let ratedCount = 0;
+  const byCounty = new Map();
   payload.features?.forEach((feature) => {
     const attributes = feature.attributes || {};
     const county = COUNTY_BY_JURISDICTION[String(attributes.JURSCODE || "").toUpperCase()];
@@ -1406,11 +1414,44 @@ async function loadCurrentTaxRevenue(geography, signal) {
     const rate = taxRateForLocation(county, municipality);
     const total = Number(attributes.averageTotal) * Number(attributes.totalCount);
     if (Number.isFinite(rate) && Number.isFinite(total)) {
-      revenue += total * rate;
+      const countyRevenue = total * rate;
+      revenue += countyRevenue;
+      byCounty.set(county, (byCounty.get(county) || 0) + countyRevenue);
       ratedCount += Number(attributes.totalCount) || 0;
     }
   });
-  return ratedCount ? revenue : null;
+  return {
+    revenue: ratedCount ? revenue : null,
+    byCounty,
+  };
+}
+
+function updateCurrentTaxCountyResults(byCounty) {
+  const isMultiCountyGeography = ["assembly", "congressional"].includes(elements.geographyTypeSelect.value);
+  resetTaxCountyResults(elements.taxCurrentCountyResults, "Current tax by county");
+  if (!isMultiCountyGeography || !byCounty?.size) {
+    elements.taxCurrentCountyResults.hidden = true;
+    return;
+  }
+
+  [...byCounty.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([county, revenue]) => {
+      const row = document.createElement("div");
+      row.className = "tax-model-county-row";
+      row.innerHTML = `<span>${escapeHtml(county)}</span><strong>${escapeHtml(formatCompactCurrency(revenue))}</strong>`;
+      elements.taxCurrentCountyResults.append(row);
+    });
+  elements.taxCurrentCountyResults.hidden = false;
+}
+
+function resetTaxCountyResults(container, heading) {
+  container.replaceChildren(
+    Object.assign(document.createElement("p"), {
+      className: "tax-model-breakdown-heading",
+      textContent: heading,
+    }),
+  );
 }
 
 async function loadTaxMetrics(
@@ -1466,7 +1507,10 @@ async function loadTaxMetrics(
       summary.landValueRatio = (summary.landValue / summary.totalValue) * 100;
     }
     updateStatus("Calculating current tax…");
-    summary.currentTaxRevenue = await loadCurrentTaxRevenue(geography, signal);
+    const currentTax = await loadCurrentTaxRevenue(geography, signal);
+    summary.currentTaxRevenue = currentTax.revenue;
+    summary.currentTaxByCounty = currentTax.byCounty;
+    updateCurrentTaxCountyResults(summary.currentTaxByCounty);
     updateAnalysisMetrics("tax", summary);
   } catch (error) {
     if (error.name === "AbortError") throw error;
@@ -1802,7 +1846,7 @@ async function calculateHypotheticalTax(event) {
     const geographyType = elements.geographyTypeSelect.value;
     if (geographyType === "assembly" || geographyType === "congressional") {
       elements.taxModelResult.hidden = true;
-      elements.taxModelCountyResults.replaceChildren();
+      resetTaxCountyResults(elements.taxModelCountyResults, "Hypothetical tax by county");
       elements.taxModelCountyResults.hidden = false;
       let groupedRevenue;
       if (serverRenderedParcelLayer) {
@@ -1895,8 +1939,10 @@ async function loadParcels() {
   elements.underutilizedSelect.value = "";
   underutilizedMode = "";
   elements.taxModelResult.hidden = true;
-  elements.taxModelCountyResults.replaceChildren();
+  resetTaxCountyResults(elements.taxModelCountyResults, "Hypothetical tax by county");
   elements.taxModelCountyResults.hidden = true;
+  resetTaxCountyResults(elements.taxCurrentCountyResults, "Current tax by county");
+  elements.taxCurrentCountyResults.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
   elements.refreshParcels.disabled = true;
   updateAnalysisMetrics(toolAtRequestStart);
@@ -2027,6 +2073,7 @@ async function loadParcels() {
           };
         }
         currentTaxRate = taxSummary.countyTaxRate;
+        updateCurrentTaxCountyResults(taxSummary.currentTaxByCounty);
         updateAnalysisMetrics("tax", taxSummary);
       }
       if (toolAtRequestStart === "tax") {
