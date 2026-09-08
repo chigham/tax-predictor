@@ -98,6 +98,15 @@
           <span id="status-indicator" class="status-indicator" aria-hidden="true"></span>
           <p id="status-message" role="status" aria-live="polite">Ready to query parcels in the current map view.</p>
         </div>
+        <div id="parcel-load-progress" class="task-progress parcel-load-progress" hidden aria-live="polite">
+          <div class="task-progress__header">
+            <span id="parcel-load-progress-label">Loading parcel shapes…</span>
+            <strong id="parcel-load-progress-count">0 / —</strong>
+          </div>
+          <div class="task-progress__track" aria-hidden="true">
+            <span id="parcel-load-progress-bar"></span>
+          </div>
+        </div>
         <div class="metric-grid" aria-label="Parcel query results">
           <div class="metric-card">
             <span class="metric-label">Parcels loaded</span>
@@ -122,7 +131,10 @@
               <input id="improvement-tax-rate" type="number" min="0" step="0.01" inputmode="decimal" value="1">
             </label>
           </div>
-          <button id="calculate-tax-model" class="secondary-action" type="submit">Calculate scenario</button>
+          <button id="calculate-tax-model" class="secondary-action" type="submit">
+            <span id="calculate-tax-model-label">Calculate scenario</span>
+            <span class="loading-spinner loading-spinner--button" aria-hidden="true"></span>
+          </button>
           <div id="tax-model-result" class="tax-model-result" hidden>
             <span>Hypothetical tax</span>
             <strong id="hypothetical-tax-value">—</strong>
