@@ -15,6 +15,7 @@
       crossorigin=""
     />
     <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
   </head>
   <body>
     <main class="app-shell">
@@ -146,6 +147,15 @@
             <p class="tax-model-breakdown-heading">Hypothetical tax by county</p>
           </div>
         </form>
+        <section id="tax-download-controls" class="tax-download-controls" hidden aria-labelledby="tax-download-heading">
+          <p id="tax-download-heading" class="controls-heading">Download analysis data</p>
+          <p class="controls-copy">Downloading detailed parcel info may take several moments.</p>
+          <div class="download-actions">
+            <button id="download-summary" class="download-action" type="button">Summary statistics</button>
+            <button id="download-parcels" class="download-action" type="button">Detailed parcel info</button>
+            <button id="download-metadata" class="download-action" type="button">Metadata</button>
+          </div>
+        </section>
         <button id="refresh-parcels" class="primary-action" type="button">
           <span>Refresh parcels in view</span>
           <span aria-hidden="true">↻</span>

@@ -697,6 +697,44 @@ h2 {
   font-weight: 700;
 }
 
+.tax-download-controls {
+  margin: 16px 0;
+  padding: 13px;
+  border: 1px solid rgba(20, 107, 87, 0.2);
+  border-radius: 10px;
+  background: #f4faf6;
+}
+
+.download-actions {
+  display: grid;
+  gap: 7px;
+}
+
+.download-action {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(20, 107, 87, 0.22);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--green-dark);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.download-action:hover,
+.download-action:focus-visible {
+  border-color: var(--green);
+  background: var(--mint);
+  outline: none;
+}
+
+.download-action:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .primary-action {
   display: flex;
   align-items: center;
