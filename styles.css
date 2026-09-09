@@ -101,9 +101,10 @@ button {
   border-radius: 12px;
   background: var(--green);
   color: #fffdf8;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.05em;
+  text-align: center;
 }
 
 .eyebrow {

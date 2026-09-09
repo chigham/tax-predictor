@@ -1,4 +1,4 @@
-# ParcelLens
+# Parcel Analysis MD
 
 The purpose of this web app is to help policy decision makers understand ADUs and tax models to spur housing and economic development at the county level through two types of analysis:
 

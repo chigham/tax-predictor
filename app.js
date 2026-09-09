@@ -1614,7 +1614,7 @@ function downloadTextFile(filename, content, type) {
 
 function downloadBaseName(suffix) {
   const geography = formatGeographyName().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase();
-  return `parcellens-${geography || "selected-area"}-${suffix}`;
+  return `parcelanalysismd-${geography || "selected-area"}-${suffix}`;
 }
 
 function currentScenarioRates() {
@@ -1713,7 +1713,7 @@ async function summaryCsv(signal) {
 
 function metadataText() {
   const citationTime = new Date().toISOString();
-  return `ParcelLens tax analysis export metadata
+  return `Parcel Analysis MD tax analysis export metadata
 
 SUMMARY STATISTICS CSV
 Columns:
