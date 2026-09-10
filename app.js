@@ -187,8 +187,9 @@ const GEOGRAPHY_CONFIG = {
       },
       {
         county: "Howard County",
-        queryUrl: "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3ACouncil_Districts&outputFormat=application%2Fjson&maxFeatures=50",
+        queryUrl: "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3ACouncil_Districts&outputFormat=text%2Fjavascript&srsName=EPSG%3A4326&maxFeatures=50",
         format: "geojson",
+        jsonp: true,
         valueField: "DISTRICT20",
         formatChoice: (properties) => `District ${properties.DISTRICT20}`,
       },
@@ -626,6 +627,43 @@ function countyCouncilQueryUrl(source) {
   return `${source.serviceUrl}/query?${params.toString()}`;
 }
 
+let countyCouncilJsonpRequestId = 0;
+
+function loadCountyCouncilJsonp(source, signal) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `taxPredictorHowardCouncil${++countyCouncilJsonpRequestId}`;
+    const script = document.createElement("script");
+    let settled = false;
+
+    const cleanup = () => {
+      script.remove();
+      delete window[callbackName];
+      signal.removeEventListener("abort", handleAbort);
+    };
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const handleAbort = () => {
+      const error = new DOMException("The request was aborted.", "AbortError");
+      finish(reject, error);
+    };
+
+    window[callbackName] = (payload) => finish(resolve, payload);
+    script.onerror = () => finish(reject, new Error("The Howard County district service could not be loaded."));
+    signal.addEventListener("abort", handleAbort, { once: true });
+
+    const url = new URL(countyCouncilQueryUrl(source));
+    url.searchParams.set("outputFormat", "text/javascript");
+    url.searchParams.set("srsName", "EPSG:4326");
+    url.searchParams.set("format_options", `callback:${callbackName}`);
+    script.src = url.toString();
+    document.head.append(script);
+  });
+}
+
 function compareCountyDistricts(a, b) {
   const [countyA, districtA = ""] = a.properties.GEOGRAPHY_LABEL.split(" — ");
   const [countyB, districtB = ""] = b.properties.GEOGRAPHY_LABEL.split(" — ");
@@ -656,13 +694,21 @@ async function loadCountyCouncilChoices(signal) {
           return { source, payload };
         }
 
-        const response = await fetch(countyCouncilQueryUrl(source), {
-          signal,
-          headers: { Accept: "application/geo+json, application/json" },
-        });
-        const payload = await response.json();
-        if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
-          throw new Error(payload.error?.message || `Service returned ${response.status}.`);
+        let payload;
+        if (source.jsonp) {
+          payload = await loadCountyCouncilJsonp(source, signal);
+        } else {
+          const response = await fetch(countyCouncilQueryUrl(source), {
+            signal,
+            headers: { Accept: "application/geo+json, application/json" },
+          });
+          payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.error?.message || `Service returned ${response.status}.`);
+          }
+        }
+        if (payload.error || payload.type !== "FeatureCollection") {
+          throw new Error(payload.error?.message || "The district service did not return GeoJSON.");
         }
         return { source, payload };
       } catch (error) {

@@ -14,7 +14,7 @@ The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap til
 - Map centered on Maryland at first load.
 - Independent dropdowns for geographic subset and analysis type.
 - Two-tier geography selection for General Assembly districts, U.S. congressional districts, counties, municipalities, and councilmanic/commissioner districts within counties.
-- County council / commissioner districts from county-level services for Anne Arundel, Baltimore City, Baltimore County, Calvert, Carroll, Cecil, Charles, Dorchester, Frederick, Garrett, Harford, ==Howard==, Montgomery, Prince George's, Queen Anne's, Somerset, St. Mary's, Wicomico, and Worcester counties. Allegany, Caroline, Kent, Talbot, and Washington use their county boundaries from the statewide political-boundaries layer because their commissioners are elected at-large. (Howard County districts need to be verified.)
+- County council / commissioner districts from county-level services for Anne Arundel, Baltimore City, Baltimore County, Calvert, Carroll, Cecil, Charles, Dorchester, Frederick, Garrett, Harford, Howard, Montgomery, Prince George's, Queen Anne's, Somerset, St. Mary's, Wicomico, and Worcester counties. Allegany, Caroline, Kent, Talbot, and Washington use their county boundaries from the statewide political-boundaries layer because their commissioners are elected at-large.
 - Selected statewide geography boundaries loaded from Maryland iMAP and highlighted on selection.
 - Tool-specific query definitions in `app.js`.
 - Limited metrics for ADU feasibility (basically n for total number of single-family homes).
@@ -57,12 +57,12 @@ Note on SDAT: The SDAT Real Property Search terms prohibit automated or robotic 
 ## Suggested next steps
 
 Christopher's wish list:
-1. Add a button to download results as-is or with key derived metrics like land:total ratio, mean sfh land:total, etc.
-2. Enable Howard County Council districts in geographic subsets.
-3. Customize the actual base tax rates by county so they are not all just 1%.
-4. Optimize optimize optimize. Especially loading parcel geometries if possible.
+1. Add a button to download results as-is or with key derived metrics like land:total ratio, mean sfh land:total, etc. - In-progress
+2. Enable Howard County Council districts in geographic subsets. - Done
+3. Customize the actual base tax rates by county so they are not all just 1%. - Done
+4. Optimize optimize optimize. Especially loading parcel geometries if possible. - Always in-progress
 5. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations.
-6. A second button in the split-rate scenario next to "Calculate scenario" which allows the user to toggle between the basic popups and a custom one that compares the current expected county tax situation to the scenario with the user inputs.
+6. A second button in the split-rate scenario next to "Calculate scenario" which allows the user to toggle between the basic popups and a custom one that compares the current expected county tax situation to the scenario with the user inputs. - Superseded, just added split-rate, hypothetical tax, and actual tax to all popups
 
 AI recommendations:
 1. Confirm the authoritative ADU eligibility rules and map each rule to available GIS fields or additional services. ==See C's wish list #5==
