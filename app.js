@@ -2087,6 +2087,15 @@ function prepareTaxModelControls() {
   elements.underutilizedControl.hidden = serverRenderedParcelLayer;
 }
 
+function validateTaxRateInput(input) {
+  const value = input.value.trim();
+  const decimalPlaces = value.includes(".") ? value.split(".")[1].length : 0;
+  const isNumeric = /^(?:\d+\.?\d*|\.\d+)$/.test(value);
+  const isValid = isNumeric && decimalPlaces <= 6 && Number(value) >= 0;
+  input.setCustomValidity(isValid ? "" : "Enter a non-negative rate with no more than 6 decimal places.");
+  return isValid;
+}
+
 function isSingleFamilyParcel(properties) {
   const description = String(properties.DESCLU || "").toLowerCase();
   if (/single[- ]family|single family detached|detached dwelling|sfh/.test(description)) return true;
@@ -2242,6 +2251,13 @@ function groupHypotheticalTaxFeatures(features, landRate, improvementRate) {
 async function calculateHypotheticalTax(event) {
   event.preventDefault();
   if (!loadedTaxParcels || taxScenarioRequest) return;
+
+  const hasValidRates = [elements.landTaxRate, elements.improvementTaxRate]
+    .every(validateTaxRateInput);
+  if (!hasValidRates) {
+    setStatus("Enter non-negative rates with no more than 6 decimal places.", "error");
+    return;
+  }
 
   const landRate = Number(elements.landTaxRate.value) / 100;
   const improvementRate = Number(elements.improvementTaxRate.value) / 100;
@@ -2671,6 +2687,8 @@ elements.underutilizedSelect.addEventListener("change", () => {
 
 elements.closeTool.addEventListener("click", closeTool);
 elements.refreshParcels.addEventListener("click", loadParcels);
+elements.landTaxRate.addEventListener("input", () => validateTaxRateInput(elements.landTaxRate));
+elements.improvementTaxRate.addEventListener("input", () => validateTaxRateInput(elements.improvementTaxRate));
 elements.taxModelControls.addEventListener("submit", calculateHypotheticalTax);
 elements.downloadSummary.addEventListener("click", () => {
   runDownload(
