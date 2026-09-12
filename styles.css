@@ -283,6 +283,51 @@ h1 {
   font-size: 12px;
 }
 
+.underutilized-description {
+  margin: 7px 1px 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(20, 107, 87, 0.16);
+  border-radius: 7px;
+  background: rgba(223, 242, 232, 0.5);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.underutilized-description strong {
+  color: var(--ink);
+}
+
+.underutilized-definitions {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.underutilized-definitions summary {
+  color: var(--green-dark);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.underutilized-definitions dl {
+  margin: 8px 1px 0;
+}
+
+.underutilized-definitions dl > div + div {
+  margin-top: 7px;
+}
+
+.underutilized-definitions dt {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.underutilized-definitions dd {
+  margin: 2px 0 0;
+}
+
 .tool-icon--analysis {
   background: #f7ecd5;
   color: #8b671c;

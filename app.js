@@ -372,6 +372,8 @@ const elements = {
   analysisSelect: document.querySelector("#analysis-select"),
   underutilizedControl: document.querySelector("#underutilized-control"),
   underutilizedSelect: document.querySelector("#underutilized-select"),
+  underutilizedDescription: document.querySelector("#underutilized-description"),
+  underutilizedDescriptionText: document.querySelector("#underutilized-description-text"),
   selectedGeography: document.querySelector("#selected-geography"),
   acknowledgements: document.querySelector(".acknowledgements"),
   acknowledgementsTrigger: document.querySelector(".acknowledgements-trigger"),
@@ -525,6 +527,7 @@ function clearParcelResults() {
   elements.underutilizedSelect.disabled = false;
   underutilizedMode = "";
   elements.underutilizedSelect.value = "";
+  updateUnderutilizedDescription();
   elements.underutilizedControl.hidden = true;
   currentTaxRate = null;
   elements.taxModelControls.hidden = true;
@@ -557,6 +560,7 @@ function showTool(toolKey) {
   elements.taxModelControls.hidden = true;
   elements.underutilizedControl.hidden = true;
   elements.underutilizedSelect.value = "";
+  updateUnderutilizedDescription();
   underutilizedMode = "";
   elements.taxModelResult.hidden = true;
   updateAnalysisMetrics(toolKey);
@@ -1792,7 +1796,10 @@ Columns:
 - PREDICTED_TAX_BILL: NFMTTLVL multiplied by the applicable rate.
 - SPLIT_LAND_RATE_PERCENT / SPLIT_IMPROVEMENT_RATE_PERCENT: selected scenario input rates.
 - HYPOTHETICAL_SPLIT_RATE_BILL: land assessment times split land rate plus improvements times split improvement rate.
-- UNDERUTILIZED_VACANT, UNDERUTILIZED_LAND_MAJORITY, UNDERUTILIZED_HIGH_VALUE_URBAN, UNDERUTILIZED_BELOW_AVERAGE_SFH: 0/1 indicators using the app's underutilization rules.
+- UNDERUTILIZED_VACANT: "No assessed value for improvements, or improvements=$0."
+- UNDERUTILIZED_LAND_MAJORITY: "Land value is greater than improvements value."
+- UNDERUTILIZED_HIGH_VALUE_URBAN: "Land value is at least $1M and greater than improvements value. The parcel is also in an urban area (cluster with population greater than 2,000)."
+- UNDERUTILIZED_BELOW_AVERAGE_SFH: "Land value makes up a greater portion of the Total value than for the average single-family home in the geographic bounds of interest."
 
 Source: Maryland iMAP parcel layer: ${PARCEL_LAYER_URL}. Accessed ${citationTime}.
 `;
@@ -2406,6 +2413,7 @@ async function loadParcels() {
   elements.taxModelControls.hidden = true;
   elements.underutilizedControl.hidden = true;
   elements.underutilizedSelect.value = "";
+  updateUnderutilizedDescription();
   underutilizedMode = "";
   elements.taxModelResult.hidden = true;
   resetTaxCountyResults(elements.taxModelCountyResults, "Hypothetical tax by county");
@@ -2691,7 +2699,18 @@ elements.analysisSelect.addEventListener("change", () => {
   showTool(toolKey);
 });
 
+function updateUnderutilizedDescription() {
+  const selectedOption = elements.underutilizedSelect.selectedOptions[0];
+  const definition = [...elements.underutilizedControl.querySelectorAll("[data-definition-for]")].find(
+    (candidate) => candidate.dataset.definitionFor === selectedOption?.value,
+  );
+  const description = definition?.textContent.trim() || "";
+  elements.underutilizedDescriptionText.textContent = description;
+  elements.underutilizedDescription.hidden = !description;
+}
+
 elements.underutilizedSelect.addEventListener("change", () => {
+  updateUnderutilizedDescription();
   underutilizedMode = elements.underutilizedSelect.value;
   const updateId = ++underutilizedUpdateId;
 
@@ -2715,6 +2734,8 @@ elements.underutilizedSelect.addEventListener("change", () => {
       setStatus("Could not load the urban-area boundary.", "error");
     });
 });
+
+updateUnderutilizedDescription();
 
 elements.closeTool.addEventListener("click", closeTool);
 elements.refreshParcels.addEventListener("click", loadParcels);
