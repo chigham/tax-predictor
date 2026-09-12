@@ -765,7 +765,7 @@ h2 {
   transform: none;
 }
 
-.prototype-note {
+.unofficial-note {
   margin: 14px 0 0;
   color: #87928b;
   font-size: 10px;
@@ -833,8 +833,7 @@ h2 {
   transition: opacity 160ms ease, transform 160ms ease;
 }
 
-.acknowledgements:hover .acknowledgements-popover,
-.acknowledgements:focus-within .acknowledgements-popover {
+.acknowledgements.is-open .acknowledgements-popover {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);

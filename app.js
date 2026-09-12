@@ -289,7 +289,7 @@ const TOOL_CONFIG = {
     kicker: "Assessment signals",
     title: "Tax model analyzer",
     description:
-      "Load Maryland parcels with a positive appraised full value and no exemption class.",
+      "Load Maryland parcels with a positive appraised full value and no exemption class. This tool is for predicting COUNTY LEVEL REAL PROPERTY TAX only, not municipal, state, income, or specialty taxes.",
     where:
       "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND NFMTTLVL > 0 AND EXCLASS IS NULL",
     color: "#9b721e",
@@ -373,6 +373,9 @@ const elements = {
   underutilizedControl: document.querySelector("#underutilized-control"),
   underutilizedSelect: document.querySelector("#underutilized-select"),
   selectedGeography: document.querySelector("#selected-geography"),
+  acknowledgements: document.querySelector(".acknowledgements"),
+  acknowledgementsTrigger: document.querySelector(".acknowledgements-trigger"),
+  acknowledgementsPopover: document.querySelector("#acknowledgements-popover"),
 };
 
 let activeTool = null;
@@ -2600,6 +2603,34 @@ elements.analysisToggle.addEventListener("click", () => {
     elements.geographyMenu,
     elements.geographyToggle,
   );
+});
+
+function setAcknowledgementsOpen(isOpen) {
+  elements.acknowledgements.classList.toggle("is-open", isOpen);
+  elements.acknowledgementsTrigger.setAttribute("aria-expanded", String(isOpen));
+  elements.acknowledgementsPopover.setAttribute("aria-hidden", String(!isOpen));
+  elements.acknowledgementsPopover.toggleAttribute("inert", !isOpen);
+  elements.acknowledgementsTrigger.setAttribute(
+    "aria-label",
+    isOpen ? "Hide data sources" : "Show data sources",
+  );
+}
+
+elements.acknowledgementsTrigger.addEventListener("click", () => {
+  setAcknowledgementsOpen(!elements.acknowledgements.classList.contains("is-open"));
+});
+
+document.addEventListener("click", (event) => {
+  if (!elements.acknowledgements.contains(event.target)) {
+    setAcknowledgementsOpen(false);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && elements.acknowledgements.classList.contains("is-open")) {
+    setAcknowledgementsOpen(false);
+    elements.acknowledgementsTrigger.focus();
+  }
 });
 
 elements.geographyTypeSelect.addEventListener("change", () => {

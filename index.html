@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="A Maryland parcel analysis prototype."
+      content="A Maryland parcel analysis tool."
     />
     <title>Parcel Analysis | Maryland</title>
     <link
@@ -160,7 +160,7 @@
           <span>Refresh parcels in view</span>
           <span aria-hidden="true">↻</span>
         </button>
-        <p class="prototype-note">Prototype filter only. Planning, zoning, and tax conclusions require official review.</p>
+        <p class="unofficial-note">Planning and tax conclusions should require official review.</p>
       </aside>
 
       <div class="map-status" aria-live="polite">
@@ -168,10 +168,10 @@
       </div>
 
       <div class="acknowledgements">
-        <button class="acknowledgements-trigger" type="button" aria-label="Show data sources">
+        <button class="acknowledgements-trigger" type="button" aria-label="Show data sources" aria-expanded="false" aria-controls="acknowledgements-popover">
           <span aria-hidden="true">ⓘ</span> Data sources
         </button>
-        <div class="acknowledgements-popover" role="tooltip">
+        <div id="acknowledgements-popover" class="acknowledgements-popover" role="dialog" aria-label="Acknowledgements" aria-hidden="true" inert>
           <strong>Acknowledgements</strong>
           <p>Parcel, boundary, and basemap data are provided by:</p>
           <ul>
