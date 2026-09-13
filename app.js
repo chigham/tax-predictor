@@ -1914,7 +1914,7 @@ Columns:
 
 DETAILED PARCEL CSV
 Columns:
-- OBJECTID, ACCTID: parcel identifiers.
+- ACCTID: parcel identifier.
 - ADDRESS, street fields, CITY, ZIPCODE: address attributes from Maryland iMAP.
 - DESCLU, LU, ACRES, SQFTSTRC, YEARBLT, ZONING, BLDG_UNITS, OOI: selected parcel characteristics.
 - NFMLNDVL: land assessment.
@@ -2016,7 +2016,7 @@ async function detailedParcelCsv(signal) {
     : "";
   const rates = currentScenarioRates();
   const headers = [
-    "OBJECTID", "ACCTID", "ADDRESS", "STRTNUM", "STRTDIR", "STRTNAM", "STRTTYP", "STRTSFX", "STRTUNT",
+    "ACCTID", "ADDRESS", "STRTNUM", "STRTDIR", "STRTNAM", "STRTTYP", "STRTSFX", "STRTUNT",
     "CITY", "ZIPCODE", "DESCLU", "LU", "ACRES", "SQFTSTRC", "YEARBLT", "NFMLNDVL", "NFMIMPVL", "NFMTTLVL",
     "ZONING", "BLDG_UNITS", "OOI", "DISTRICT", "JURSCODE", "TOWNCODE", "DESCTOWN",
     "APPLICABLE_TAX_RATE_PERCENT", "PREDICTED_TAX_BILL", "SPLIT_LAND_RATE_PERCENT", "SPLIT_IMPROVEMENT_RATE_PERCENT",
@@ -2039,7 +2039,7 @@ async function detailedParcelCsv(signal) {
     const predictedTax = Number.isFinite(total) && Number.isFinite(actualRate) ? total * actualRate : null;
     const hypotheticalTax = (Number.isFinite(land) ? land * rates.landRate : 0) + improvement * rates.improvementRate;
     return [
-      properties.OBJECTID ?? "", properties.ACCTID, properties.ADDRESS, properties.STRTNUM, properties.STRTDIR,
+      properties.ACCTID, properties.ADDRESS, properties.STRTNUM, properties.STRTDIR,
       properties.STRTNAM, properties.STRTTYP, properties.STRTSFX, properties.STRTUNT, properties.CITY, properties.ZIPCODE,
       properties.DESCLU, properties.LU, properties.ACRES, properties.SQFTSTRC, properties.YEARBLT, land, improvement,
       total, properties.ZONING, properties.BLDG_UNITS, properties.OOI, selectedDistrict, properties.JURSCODE, properties.TOWNCODE,
