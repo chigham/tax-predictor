@@ -776,6 +776,32 @@ async function loadCountyCouncilChoices(signal) {
   return [...featuresByValue.values()].sort(compareCountyDistricts);
 }
 
+function normalizeAssemblyDistrictValue(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const match = text.match(/^\s*(\d+)(?:[A-Z])?\s*$/i);
+  if (!match) return text;
+  return match[1];
+}
+
+function compareAssemblyDistrictValues(a, b) {
+  const getParts = (value) => {
+    const text = String(value ?? "").trim();
+    const match = text.match(/^(\d+)([A-Z])?$/i);
+    if (!match) return { base: Number.NaN, suffix: "" };
+    return { base: Number(match[1]), suffix: (match[2] || "").toUpperCase() };
+  };
+
+  const left = getParts(a);
+  const right = getParts(b);
+  if (Number.isFinite(left.base) && Number.isFinite(right.base) && left.base !== right.base) {
+    return left.base - right.base;
+  }
+  if (left.base !== right.base) return String(a).localeCompare(String(b));
+  const suffixOrder = { "": 0, A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8, I: 9, J: 10 };
+  return (suffixOrder[left.suffix] ?? 99) - (suffixOrder[right.suffix] ?? 99);
+}
+
 async function loadGeographyChoices(type) {
   const config = GEOGRAPHY_CONFIG[type];
   if (geographyLoadRequest) geographyLoadRequest.abort();
@@ -803,27 +829,45 @@ async function loadGeographyChoices(type) {
       }
 
       const featuresByValue = new Map();
+      const addFeature = (value, feature) => {
+        const geometry = feature.geometry.type === "Polygon"
+          ? [feature.geometry.coordinates]
+          : feature.geometry.coordinates;
+        const existing = featuresByValue.get(value);
+        if (existing) {
+          existing.geometry.coordinates.push(...geometry);
+        } else {
+          featuresByValue.set(value, {
+            type: "Feature",
+            properties: { ...feature.properties, [config.valueField]: value },
+            geometry: { type: "MultiPolygon", coordinates: [...geometry] },
+          });
+        }
+      };
+
       (payload.features || [])
         .filter((feature) => feature.geometry && feature.properties?.[config.valueField])
         .forEach((feature) => {
-          const value = String(feature.properties[config.valueField]);
-          const geometry = feature.geometry.type === "Polygon"
-            ? [feature.geometry.coordinates]
-            : feature.geometry.coordinates;
-          const existing = featuresByValue.get(value);
-          if (existing) {
-            existing.geometry.coordinates.push(...geometry);
+          const rawValue = String(feature.properties[config.valueField]).trim();
+          if (!rawValue) return;
+
+          if (type === "assembly") {
+            const combinedValue = normalizeAssemblyDistrictValue(rawValue);
+            addFeature(rawValue, feature);
+            if (combinedValue && combinedValue !== rawValue) {
+              addFeature(combinedValue, feature);
+            }
           } else {
-            featuresByValue.set(value, {
-              type: "Feature",
-              properties: { ...feature.properties, [config.valueField]: value },
-              geometry: { type: "MultiPolygon", coordinates: [...geometry] },
-            });
+            addFeature(rawValue, feature);
           }
         });
 
-      geographyFeatures = [...featuresByValue.values()]
-        .sort((a, b) => String(a.properties[config.valueField]).localeCompare(String(b.properties[config.valueField])));
+      geographyFeatures = [...featuresByValue.values()].sort((a, b) => {
+        if (type === "assembly") {
+          return compareAssemblyDistrictValues(a.properties[config.valueField], b.properties[config.valueField]);
+        }
+        return String(a.properties[config.valueField]).localeCompare(String(b.properties[config.valueField]));
+      });
     }
 
     if (geographyLoadRequest !== request) return;
