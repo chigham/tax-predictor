@@ -6,6 +6,7 @@ const STATE_ZOOM = 8;
 const MAX_PARCELS_PER_REQUEST = 1000;
 const PARCEL_OUT_FIELDS =
   "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN";
+const UNDERUTILIZED_OUT_FIELDS = "OBJECTID,NFMLNDVL,NFMIMPVL,NFMTTLVL,DESCLU,LU,SQFTSTRC,BLDG_UNITS";
 const COUNTY_TAX_RATES = {
   "Allegany County": {"base": 0.00975, "municipalities":{"Barton": 0.009133, "Cumberland": 0.008195, "Frostburg": 0.00861, "Lonaconing": 0.008756, "Luke": 0.008752, "Midland": 0.009133, "Westernport": 0.009133}},  // varies by municipality
   "Anne Arundel County": {"base": 0.00968, "municipalities":{"Annapolis": 0.00577, "Highland Beach": 0.00938}},  // varies by municipality
@@ -394,6 +395,7 @@ let taxScenarioRequest = null;
 let downloadRequest = null;
 let openParcelPopup = null;
 let loadedTaxParcels = null;
+let loadedTaxBenchmarkParcels = null;
 let loadedParcelIds = [];
 let latestTaxSummary = null;
 let serverRenderedParcelLayer = false;
@@ -401,6 +403,8 @@ let underutilizedMode = "";
 let underutilizedUpdateId = 0;
 let urbanFeaturesPromise = null;
 let parcelLoadingMarker = null;
+let underutilizedVectorLayer = null;
+let underutilizedGeometryRequest = null;
 
 function setStatus(message, state = "ready") {
   elements.statusMessage.textContent = message;
@@ -504,6 +508,14 @@ function clearParcelResults() {
     downloadRequest.abort();
     downloadRequest = null;
   }
+  if (underutilizedGeometryRequest) {
+    underutilizedGeometryRequest.abort();
+    underutilizedGeometryRequest = null;
+  }
+  if (underutilizedVectorLayer) {
+    map.removeLayer(underutilizedVectorLayer);
+    underutilizedVectorLayer = null;
+  }
   underutilizedUpdateId += 1;
   if (parcelLayer) {
     map.removeLayer(parcelLayer);
@@ -516,6 +528,7 @@ function clearParcelResults() {
   removeParcelLoadingMarker();
   serverRenderedParcelLayer = false;
   loadedTaxParcels = null;
+  loadedTaxBenchmarkParcels = null;
   loadedParcelIds = [];
   latestTaxSummary = null;
   taxScenario = null;
@@ -883,6 +896,7 @@ function ringCenter(ring) {
 }
 
 function geometryCenter(geometry) {
+  if (!geometry) return null;
   if (geometry.type === "Polygon") return ringCenter(geometry.coordinates[0]);
   if (geometry.type === "MultiPolygon") {
     const centers = geometry.coordinates.map((polygon) => ringCenter(polygon[0]));
@@ -989,6 +1003,7 @@ function municipalityNameFromParcelDescription(value) {
 
 function summarizeTaxParcels(geojson) {
   const summary = summarizeParcels(geojson, null);
+  Object.assign(summary, sfhLandRatioStatistics(geojson?.features));
 
   let taxRevenue = 0;
   let ratedParcels = 0;
@@ -1284,6 +1299,7 @@ function createServerRenderedParcelLayer(toolKey, geography) {
           interactive: false,
         }).addTo(layer);
         imageOverlay.once("remove", () => URL.revokeObjectURL(imageUrl));
+        if (underutilizedMode) void updateUnderutilizedHighlights();
         resolve();
       } catch (error) {
         if (error.name === "AbortError") {
@@ -1421,6 +1437,70 @@ async function loadGeographyParcels(toolKey, geography, signal, objectIds = null
     type: "FeatureCollection",
     features,
   };
+}
+
+async function loadGeographyParcelAttributes(toolKey, geography, objectIds, signal, onProgress = null) {
+  const idQuery = buildParcelQuery(toolKey, geography);
+  const parcelIds = objectIds || [];
+  const features = [];
+  const batchSize = 500;
+
+  for (let start = 0; start < parcelIds.length; start += batchSize) {
+    const batchParams = new URLSearchParams(idQuery.options.body);
+    batchParams.delete("geometry");
+    batchParams.delete("geometryType");
+    batchParams.delete("inSR");
+    batchParams.delete("spatialRel");
+    batchParams.delete("where");
+    batchParams.delete("outSR");
+    batchParams.delete("resultRecordCount");
+    batchParams.set("objectIds", parcelIds.slice(start, start + batchSize).join(","));
+    batchParams.set("outFields", UNDERUTILIZED_OUT_FIELDS);
+    batchParams.set("returnGeometry", "false");
+    batchParams.set("f", "geojson");
+
+    const response = await fetch(idQuery.url, {
+      method: "POST",
+      body: batchParams,
+      signal,
+      headers: { Accept: "application/geo+json, application/json" },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
+      throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
+    }
+    features.push(...(payload.features || []));
+    onProgress?.(features.length, parcelIds.length);
+  }
+
+  return { type: "FeatureCollection", features };
+}
+
+async function loadParcelFeaturesByIdsInView(toolKey, objectIds, signal) {
+  const query = buildParcelQuery(toolKey, null);
+  const baseParams = new URL(query.url).searchParams;
+  const features = [];
+  const batchSize = 500;
+
+  for (let start = 0; start < objectIds.length; start += batchSize) {
+    const params = new URLSearchParams(baseParams);
+    params.set("objectIds", objectIds.slice(start, start + batchSize).join(","));
+    params.set("returnGeometry", "true");
+    params.set("outFields", PARCEL_OUT_FIELDS);
+    params.set("outSR", "4326");
+    params.set("f", "geojson");
+    const response = await fetch(`${query.url.split("?")[0]}?${params.toString()}`, {
+      signal,
+      headers: { Accept: "application/geo+json, application/json" },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
+      throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
+    }
+    features.push(...(payload.features || []));
+  }
+
+  return { type: "FeatureCollection", features };
 }
 
 function parcelAggregateRequest(toolKey, geography, statistic) {
@@ -1731,6 +1811,9 @@ async function summaryCsv(signal) {
   addMetric("Total land value", summary.landValue);
   addMetric("Total overall value", summary.totalValue);
   addMetric("Land / total percent", summary.landValueRatio);
+  addMetric("Qualifying SFH parcel count", summary.sfhCount);
+  addMetric("Mean SFH land / total percent", Number.isFinite(summary.meanSfhLandRatio) ? summary.meanSfhLandRatio * 100 : "");
+  addMetric("Median SFH land / total percent", Number.isFinite(summary.medianSfhLandRatio) ? summary.medianSfhLandRatio * 100 : "");
   addMetric("Total current tax", summary.currentTaxRevenue);
   addMetric("Split land rate percent", rates.landRate * 100);
   addMetric("Split improvement rate percent", rates.improvementRate * 100);
@@ -1781,6 +1864,9 @@ Columns:
 - current_tax_total: predicted current tax total for current-tax jurisdiction rows.
 - split_land_rate_percent / split_improvement_rate_percent: scenario rates used for hypothetical rows.
 - hypothetical_tax_total: split-rate revenue for hypothetical jurisdiction rows.
+- Qualifying SFH parcel count: number of SFH parcels with valid positive total assessment used for the benchmarks.
+- Mean SFH land / total percent: arithmetic mean of qualifying SFH land-assessment-to-total-assessment ratios, expressed as a percentage.
+- Median SFH land / total percent: median of qualifying SFH land-assessment-to-total-assessment ratios, expressed as a percentage.
 
 DETAILED PARCEL CSV
 Columns:
@@ -1799,10 +1885,11 @@ Columns:
 - UNDERUTILIZED_VACANT: "No assessed value for improvements, or improvements=$0."
 - UNDERUTILIZED_LAND_MAJORITY: "Land value is greater than improvements value."
 - UNDERUTILIZED_HIGH_VALUE_URBAN: "Land value is at least $1M and greater than improvements value. The parcel is also in an urban area (cluster with population greater than 2,000)."
-- UNDERUTILIZED_BELOW_AVERAGE_SFH: "Land value makes up a greater portion of the Total value than for the average single-family home in the geographic bounds of interest."
+- UNDERUTILIZED_ABOVE_MEAN_SFH_LAND_RATIO: "1 when a non-SFH parcel's land-to-total assessment ratio is strictly greater than the arithmetic mean land-to-total assessment ratio for qualifying SFH parcels in the geographic bounds of interest; otherwise 0."
+- UNDERUTILIZED_ABOVE_MEDIAN_SFH_LAND_RATIO: "1 when a non-SFH parcel's land-to-total assessment ratio is strictly greater than the median land-to-total assessment ratio for qualifying SFH parcels in the geographic bounds of interest; otherwise 0."
 
 Source: Maryland iMAP parcel layer: ${PARCEL_LAYER_URL}. Accessed ${citationTime}.
-`;
+`;  // Double-check the definitions, especially for underutilized SFH comparison metrics
 }
 
 function ensureUrbanFeatures() {
@@ -1878,8 +1965,7 @@ async function detailedParcelCsv(signal) {
     const ratio = Number.isFinite(land) && Number.isFinite(total) && total > 0 ? land / total : null;
     return { center: record.center, properties, land, total, improvement, ratio };
   });
-  const sfh = valid.filter((item) => isSingleFamilyParcel(item.properties) && item.ratio !== null);
-  const averageSfhRatio = sfh.length ? sfh.reduce((sum, item) => sum + item.ratio, 0) / sfh.length : null;
+  const { meanSfhLandRatio, medianSfhLandRatio } = sfhLandRatioStatistics(valid);
   const geographyType = elements.geographyTypeSelect.value;
   const selectedDistrict = ["assembly", "congressional"].includes(geographyType)
     ? selectedGeography?.properties?.DISTRICT || ""
@@ -1891,7 +1977,8 @@ async function detailedParcelCsv(signal) {
     "ZONING", "BLDG_UNITS", "OOI", "DISTRICT", "JURSCODE", "TOWNCODE", "DESCTOWN",
     "APPLICABLE_TAX_RATE_PERCENT", "PREDICTED_TAX_BILL", "SPLIT_LAND_RATE_PERCENT", "SPLIT_IMPROVEMENT_RATE_PERCENT",
     "HYPOTHETICAL_SPLIT_RATE_BILL", "UNDERUTILIZED_VACANT", "UNDERUTILIZED_LAND_MAJORITY",
-    "UNDERUTILIZED_HIGH_VALUE_URBAN", "UNDERUTILIZED_BELOW_AVERAGE_SFH",
+    "UNDERUTILIZED_HIGH_VALUE_URBAN", "UNDERUTILIZED_ABOVE_MEAN_SFH_LAND_RATIO",
+    "UNDERUTILIZED_ABOVE_MEDIAN_SFH_LAND_RATIO",
   ];
   const rows = valid.map(({ center, properties, land, total, improvement, ratio }) => {
     const isUrban = center && urbanFeatures.some((urban) => urban.geometry && pointInGeometry(center, urban.geometry));
@@ -1900,19 +1987,21 @@ async function detailedParcelCsv(signal) {
       : improvement === 0;
     const landMajority = Number.isFinite(land) && Number.isFinite(total) && land >= total / 2;
     const highValueUrban = Number.isFinite(land) && land >= 1000000 && landMajority && isUrban;
-    const belowAverageSfh = !isSingleFamilyParcel(properties)
-      && ratio !== null && averageSfhRatio !== null && ratio > averageSfhRatio;
+    const aboveMeanSfh = !isSingleFamilyParcel(properties)
+      && ratio !== null && meanSfhLandRatio !== null && ratio > meanSfhLandRatio;
+    const aboveMedianSfh = !isSingleFamilyParcel(properties)
+      && ratio !== null && medianSfhLandRatio !== null && ratio > medianSfhLandRatio;
     const actualRate = taxRateForParcel(properties);
     const predictedTax = Number.isFinite(total) && Number.isFinite(actualRate) ? total * actualRate : null;
     const hypotheticalTax = (Number.isFinite(land) ? land * rates.landRate : 0) + improvement * rates.improvementRate;
     return [
-      properties.OBJECTID ?? feature.id ?? "", properties.ACCTID, properties.ADDRESS, properties.STRTNUM, properties.STRTDIR,
+      properties.OBJECTID ?? "", properties.ACCTID, properties.ADDRESS, properties.STRTNUM, properties.STRTDIR,
       properties.STRTNAM, properties.STRTTYP, properties.STRTSFX, properties.STRTUNT, properties.CITY, properties.ZIPCODE,
       properties.DESCLU, properties.LU, properties.ACRES, properties.SQFTSTRC, properties.YEARBLT, land, improvement,
       total, properties.ZONING, properties.BLDG_UNITS, properties.OOI, selectedDistrict, properties.JURSCODE, properties.TOWNCODE,
       properties.DESCTOWN, Number.isFinite(actualRate) ? actualRate * 100 : "", predictedTax, rates.landRate * 100,
       rates.improvementRate * 100, hypotheticalTax, vacant ? 1 : 0, landMajority ? 1 : 0, highValueUrban ? 1 : 0,
-      belowAverageSfh ? 1 : 0,
+      aboveMeanSfh ? 1 : 0, aboveMedianSfh ? 1 : 0,
     ];
   });
   return rowsToCsv(headers, rows);
@@ -2094,7 +2183,9 @@ function prepareTaxModelControls() {
   elements.taxModelResult.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
   elements.taxModelControls.hidden = false;
-  elements.underutilizedControl.hidden = serverRenderedParcelLayer;
+  elements.underutilizedControl.hidden = !(
+    loadedTaxParcels?.features?.length || loadedTaxBenchmarkParcels?.features?.length
+  );
 }
 
 function validateTaxRateInput(input) {
@@ -2117,8 +2208,35 @@ function isSingleFamilyParcel(properties) {
     && !/townhouse|town house|attached|multifamily|multi-family|apartment/.test(description);
 }
 
+function sfhLandRatioStatistics(features) {
+  const ratios = (features || [])
+    .map((feature) => {
+      const properties = feature.properties || feature;
+      const land = Number(properties.NFMLNDVL);
+      const total = Number(properties.NFMTTLVL);
+      return isSingleFamilyParcel(properties) && Number.isFinite(land) && Number.isFinite(total) && total > 0
+        ? land / total
+        : null;
+    })
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const mean = ratios.length ? ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length : null;
+  const middle = Math.floor(ratios.length / 2);
+  const median = !ratios.length
+    ? null
+    : ratios.length % 2
+      ? ratios[middle]
+      : (ratios[middle - 1] + ratios[middle]) / 2;
+  return {
+    sfhCount: ratios.length,
+    meanSfhLandRatio: mean,
+    medianSfhLandRatio: median,
+  };
+}
+
 async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
-  if (!loadedTaxParcels || !parcelLayer) return;
+  const benchmarkParcels = serverRenderedParcelLayer ? loadedTaxBenchmarkParcels : loadedTaxParcels;
+  if (!benchmarkParcels || !parcelLayer) return;
   if (underutilizedMode === "high-value-urban" && !urbanFeaturesPromise) {
     const params = new URLSearchParams({ where: "1=1", outFields: "*", returnGeometry: "true", outSR: "4326", f: "geojson" });
     urbanFeaturesPromise = fetch("https://mdgeodata.md.gov/imap/rest/services/Boundaries/MD_CensusStatisticalBoundaries/FeatureServer/4/query?" + params)
@@ -2130,7 +2248,7 @@ async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
   }
   const urbanFeatures = underutilizedMode === "high-value-urban" ? await urbanFeaturesPromise : [];
   if (updateId !== underutilizedUpdateId) return;
-  const features = loadedTaxParcels.features;
+  const features = benchmarkParcels.features;
   const valid = features.map((feature) => {
     const properties = feature.properties || {};
     const land = Number(properties.NFMLNDVL);
@@ -2139,23 +2257,77 @@ async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
     const ratio = Number.isFinite(land) && Number.isFinite(total) && total > 0 ? land / total : null;
     return { feature, properties, land, total, improvement, ratio };
   });
-  const sfh = valid.filter((item) => isSingleFamilyParcel(item.properties) && item.ratio !== null);
-  const averageSfhRatio = sfh.length ? sfh.reduce((sum, item) => sum + item.ratio, 0) / sfh.length : null;
-  valid.forEach((item) => {
+  const { meanSfhLandRatio, medianSfhLandRatio } = sfhLandRatioStatistics(features);
+  const matchesUnderutilized = (item, requireUrban = true) => {
     const { properties, land, total, improvement, ratio } = item;
-    const vacant = Number.isFinite(improvement) ? improvement === 0 : Number.isFinite(land) && Number.isFinite(total) && land === total;
+    const vacant = Number.isFinite(improvement)
+      ? improvement === 0
+      : Number.isFinite(land) && Number.isFinite(total) && land === total;
     const center = geometryCenter(item.feature.geometry);
     const isUrban = center && urbanFeatures.some((urban) => urban.geometry && pointInGeometry(center, urban.geometry));
-    properties.underutilizedMatch = underutilizedMode === "vacant"
+    return underutilizedMode === "vacant"
       ? vacant
       : underutilizedMode === "land-majority"
         ? Number.isFinite(land) && Number.isFinite(total) && land >= total / 2
         : underutilizedMode === "high-value-urban"
-          ? Number.isFinite(land) && land >= 1000000 && Number.isFinite(total) && land >= total / 2 && isUrban
-          : underutilizedMode === "below-average-sfh"
-            ? !isSingleFamilyParcel(properties) && ratio !== null && averageSfhRatio !== null && ratio > averageSfhRatio
-            : false;
+          ? Number.isFinite(land) && land >= 1000000 && Number.isFinite(total) && land >= total / 2
+            && (!requireUrban || isUrban)
+          : underutilizedMode === "above-mean-sfh"
+            ? !isSingleFamilyParcel(properties) && ratio !== null && meanSfhLandRatio !== null && ratio > meanSfhLandRatio
+            : underutilizedMode === "above-median-sfh"
+              ? !isSingleFamilyParcel(properties) && ratio !== null && medianSfhLandRatio !== null && ratio > medianSfhLandRatio
+              : false;
+  };
+  valid.forEach((item) => {
+    item.properties.underutilizedMatch = matchesUnderutilized(item);
   });
+
+  if (serverRenderedParcelLayer) {
+    if (underutilizedGeometryRequest) underutilizedGeometryRequest.abort();
+    if (underutilizedVectorLayer) {
+      map.removeLayer(underutilizedVectorLayer);
+      underutilizedVectorLayer = null;
+    }
+    const matchingIds = valid
+      .filter((item) => matchesUnderutilized(item, false))
+      .map((item) => item.properties.OBJECTID)
+      .filter((objectId) => objectId !== null && objectId !== undefined);
+    if (!matchingIds.length) return;
+
+    const request = new AbortController();
+    underutilizedGeometryRequest = request;
+    try {
+      const payload = await loadParcelFeaturesByIdsInView("tax", matchingIds, request.signal);
+      if (updateId !== underutilizedUpdateId || underutilizedGeometryRequest !== request) return;
+      const visibleMatches = payload.features.filter((feature) => {
+        const item = {
+          feature,
+          properties: feature.properties || {},
+          land: Number(feature.properties?.NFMLNDVL),
+          total: Number(feature.properties?.NFMTTLVL),
+          improvement: Number(feature.properties?.NFMIMPVL),
+          ratio: Number.isFinite(Number(feature.properties?.NFMLNDVL)) && Number.isFinite(Number(feature.properties?.NFMTTLVL))
+            && Number(feature.properties.NFMTTLVL) > 0
+            ? Number(feature.properties.NFMLNDVL) / Number(feature.properties.NFMTTLVL)
+            : null,
+        };
+        return matchesUnderutilized(item);
+      });
+      underutilizedVectorLayer = L.geoJSON({ type: "FeatureCollection", features: visibleMatches }, {
+        style: () => ({ color: "#e56b2f", fillColor: "#f4a261", weight: 2.5, fillOpacity: 0.58 }),
+        onEachFeature: (feature, layer) => layer.bindPopup(popupMarkup(feature.properties || {}, "tax"), {
+          className: "parcel-tooltip",
+          maxWidth: 280,
+        }),
+      }).addTo(map);
+    } catch (error) {
+      if (error.name !== "AbortError") console.warn("Could not load underutilized parcel highlights:", error);
+    } finally {
+      if (underutilizedGeometryRequest === request) underutilizedGeometryRequest = null;
+    }
+    return;
+  }
+
   parcelLayer.setStyle((feature) => {
     const style = createParcelStyle("tax");
     if (underutilizedMode && feature.properties?.underutilizedMatch) {
@@ -2387,6 +2559,14 @@ async function loadParcels() {
     downloadRequest.abort();
     downloadRequest = null;
   }
+  if (underutilizedGeometryRequest) {
+    underutilizedGeometryRequest.abort();
+    underutilizedGeometryRequest = null;
+  }
+  if (underutilizedVectorLayer) {
+    map.removeLayer(underutilizedVectorLayer);
+    underutilizedVectorLayer = null;
+  }
   underutilizedUpdateId += 1;
   const request = new AbortController();
   currentRequest = request;
@@ -2396,6 +2576,7 @@ async function loadParcels() {
   }
   removeParcelLoadingMarker();
   loadedTaxParcels = null;
+  loadedTaxBenchmarkParcels = null;
   loadedParcelIds = [];
   latestTaxSummary = null;
   currentTaxRate = null;
@@ -2445,6 +2626,7 @@ async function loadParcels() {
     let taxSummary = null;
     let objectIds = null;
     let taxMetricsPromise = null;
+    let taxBenchmarkPromise = null;
     if (geographyAtRequestStart) {
       objectIds = await loadGeographyParcelIds(
         toolAtRequestStart,
@@ -2456,6 +2638,10 @@ async function loadParcels() {
       showParcelLoadProgress("Loading parcel shapes…", 0, objectIds.length);
 
       if (toolAtRequestStart === "tax") {
+        const usesServerRendering = shouldUseServerRenderedParcels(
+          elements.geographyTypeSelect.value,
+          geographyAtRequestStart,
+        );
         taxMetricsPromise = loadTaxMetrics(
           elements.geographyTypeSelect.value,
           geographyAtRequestStart,
@@ -2465,9 +2651,17 @@ async function loadParcels() {
             setStatus(message, "loading");
             updateMapStatus(message);
           },
-          shouldUseServerRenderedParcels(elements.geographyTypeSelect.value, geographyAtRequestStart),
+          usesServerRendering,
         );
-        if (!shouldUseServerRenderedParcels(elements.geographyTypeSelect.value, geographyAtRequestStart)) {
+        if (usesServerRendering) {
+          taxBenchmarkPromise = loadGeographyParcelAttributes(
+            toolAtRequestStart,
+            geographyAtRequestStart,
+            objectIds,
+            request.signal,
+            (loaded, total) => showParcelLoadProgress("Calculating SFH benchmarks…", loaded, total),
+          );
+        } else {
           showParcelLoadProgress("Calculating parcel metrics…", 0, null, true);
           taxSummary = await taxMetricsPromise;
           currentTaxRate = taxSummary.countyTaxRate;
@@ -2519,6 +2713,21 @@ async function loadParcels() {
         elements.geographyTypeSelect.value,
         geographyAtRequestStart,
       );
+      let benchmarkSummary = null;
+      if (toolAtRequestStart === "tax") {
+        if (usesServerRendering) {
+          loadedTaxBenchmarkParcels = await taxBenchmarkPromise;
+          benchmarkSummary = sfhLandRatioStatistics(loadedTaxBenchmarkParcels.features);
+        } else {
+          loadedTaxBenchmarkParcels = null;
+          benchmarkSummary = sfhLandRatioStatistics(filteredPayload.features);
+        }
+        taxSummary = taxSummary
+          ? { ...taxSummary, ...benchmarkSummary }
+          : usesServerRendering
+            ? { ...benchmarkSummary }
+            : summarizeTaxParcels(filteredPayload);
+      }
       if (
         toolAtRequestStart === "tax" &&
         !usesServerRendering &&
@@ -2535,13 +2744,14 @@ async function loadParcels() {
         toolAtRequestStart,
         geographyAtRequestStart,
         usesServerRendering && toolAtRequestStart === "tax"
-          ? { landValue: null, totalValue: null, landValueRatio: null, currentTaxRevenue: null }
+          ? { landValue: null, totalValue: null, landValueRatio: null, currentTaxRevenue: null, ...benchmarkSummary }
           : taxSummary,
         usesServerRendering ? objectIds.length : null,
       );
       hideParcelLoadProgress();
       if (taxMetricsPromise) {
         taxSummary = await taxMetricsPromise;
+        if (benchmarkSummary) taxSummary = { ...taxSummary, ...benchmarkSummary };
         if (
           !usesServerRendering &&
           (!Number.isFinite(taxSummary.landValue) || !Number.isFinite(taxSummary.totalValue))
@@ -2554,6 +2764,9 @@ async function loadParcels() {
         currentTaxRate = taxSummary.countyTaxRate;
         updateCurrentTaxCountyResults(taxSummary.currentTaxByCounty);
         updateAnalysisMetrics("tax", taxSummary);
+        latestTaxSummary = taxSummary;
+      }
+      if (toolAtRequestStart === "tax" && !taxMetricsPromise) {
         latestTaxSummary = taxSummary;
       }
       if (toolAtRequestStart === "tax") {
@@ -2713,8 +2926,17 @@ elements.underutilizedSelect.addEventListener("change", () => {
   updateUnderutilizedDescription();
   underutilizedMode = elements.underutilizedSelect.value;
   const updateId = ++underutilizedUpdateId;
+  const benchmarkParcels = serverRenderedParcelLayer ? loadedTaxBenchmarkParcels : loadedTaxParcels;
 
-  if (!underutilizedMode || !loadedTaxParcels || !parcelLayer) {
+  if (!underutilizedMode || !benchmarkParcels || !parcelLayer) {
+    if (underutilizedGeometryRequest) {
+      underutilizedGeometryRequest.abort();
+      underutilizedGeometryRequest = null;
+    }
+    if (underutilizedVectorLayer) {
+      map.removeLayer(underutilizedVectorLayer);
+      underutilizedVectorLayer = null;
+    }
     if (parcelLayer && typeof parcelLayer.setStyle === "function") {
       parcelLayer.setStyle(() => createParcelStyle("tax"));
     }

@@ -81,7 +81,8 @@
               <option value="vacant">No improvements or vacant</option>
               <option value="land-majority">Land &gt; improvements</option>
               <option value="high-value-urban">HIGH VALUE land &gt; improvements</option>
-              <option value="below-average-sfh">Land:total &gt; average SFH</option>
+              <option value="above-mean-sfh">Land:total &gt; mean SFH</option>
+              <option value="above-median-sfh">Land:total &gt; median SFH</option>
             </select>
             <p id="underutilized-description" class="underutilized-description" role="note" hidden>
               <strong>Selected view:</strong> <span id="underutilized-description-text"></span>
@@ -102,8 +103,12 @@
                   <dd data-definition-for="high-value-urban">Land value is at least $1M and greater than improvements value. The parcel is also in an urban area (cluster with population greater than 2,000).</dd>
                 </div>
                 <div>
-                  <dt>Land:total &gt; average SFH</dt>
-                  <dd data-definition-for="below-average-sfh">Land value makes up a greater portion of the Total value than for the average single-family home in the geographic bounds of interest.</dd>
+                  <dt>Land:total &gt; mean SFH</dt>
+                  <dd data-definition-for="above-mean-sfh">Non-single family home parcels where land value makes up a greater portion of the Total value than for the arithmetic average (mean) single-family home in the geographic bounds of interest. Only non-SFH parcels are highlighted.</dd>
+                </div>
+                <div>
+                  <dt>Land:total &gt; median SFH</dt>
+                  <dd data-definition-for="above-median-sfh">Non-single family home parcels where the land-to-total assessment ratio is strictly greater than the median ratio for qualifying SFH parcels in the selected geography.</dd>
                 </div>
               </dl>
             </details>
