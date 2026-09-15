@@ -278,8 +278,6 @@ const TOOL_CONFIG = {
     title: "ADU feasibility",
     description:
       "Load developed residential and town-house parcels in the current view as a starting point for ADU research.",
-    // LU identifies the broad Maryland land-use class; SQFTSTRC is a practical
-    // proxy for a developed parcel in this statewide layer.
     where:
       "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND LU IN ('R', 'TH') AND SQFTSTRC > 0",
     color: "#146b57",
@@ -297,11 +295,11 @@ const TOOL_CONFIG = {
     fillColor: "#e5be72",
     metrics: [
       {
-        label: "Land",
+        label: "Land value",
         format: (summary) => summary.landValue === null ? "—" : formatCompactCurrency(summary.landValue),
       },
       {
-        label: "Overall",
+        label: "Overall value",
         format: (summary) => summary.totalValue === null ? "—" : formatCompactCurrency(summary.totalValue),
       },
       {
@@ -313,15 +311,15 @@ const TOOL_CONFIG = {
         format: (summary) => summary.currentTaxRevenue === null ? "—" : formatCompactCurrency(summary.currentTaxRevenue),
       },
       {
-        label: "SFH homes",
+        label: "SFH homes (n)",
         format: (summary) => summary.sfhCount === null || summary.sfhCount === undefined ? "—" : summary.sfhCount.toLocaleString(),
       },
       {
-        label: "Mean SFH land / total",
+        label: "SFH land / total (mean)",
         format: (summary) => summary.meanSfhLandRatio === null || summary.meanSfhLandRatio === undefined ? "—" : formatPercent(summary.meanSfhLandRatio * 100),
       },
       {
-        label: "Median SFH land / total",
+        label: "SFH land / total (median)",
         format: (summary) => summary.medianSfhLandRatio === null || summary.medianSfhLandRatio === undefined ? "—" : formatPercent(summary.medianSfhLandRatio * 100),
       },
     ],
