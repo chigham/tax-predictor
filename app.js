@@ -312,6 +312,18 @@ const TOOL_CONFIG = {
         label: "Current tax",
         format: (summary) => summary.currentTaxRevenue === null ? "—" : formatCompactCurrency(summary.currentTaxRevenue),
       },
+      {
+        label: "SFH homes",
+        format: (summary) => summary.sfhCount === null || summary.sfhCount === undefined ? "—" : summary.sfhCount.toLocaleString(),
+      },
+      {
+        label: "Mean SFH land / total",
+        format: (summary) => summary.meanSfhLandRatio === null || summary.meanSfhLandRatio === undefined ? "—" : formatPercent(summary.meanSfhLandRatio * 100),
+      },
+      {
+        label: "Median SFH land / total",
+        format: (summary) => summary.medianSfhLandRatio === null || summary.medianSfhLandRatio === undefined ? "—" : formatPercent(summary.medianSfhLandRatio * 100),
+      },
     ],
   },
 };
@@ -343,7 +355,6 @@ const elements = {
   parcelLoadProgressCount: document.querySelector("#parcel-load-progress-count"),
   parcelLoadProgressBar: document.querySelector("#parcel-load-progress-bar"),
   parcelCount: document.querySelector("#parcel-count"),
-  zoomLevel: document.querySelector("#zoom-level"),
   analysisMetrics: document.querySelector("#analysis-metrics"),
   taxModelControls: document.querySelector("#tax-model-controls"),
   landTaxRate: document.querySelector("#land-tax-rate"),
@@ -434,10 +445,6 @@ function hideParcelLoadProgress() {
   elements.parcelLoadProgress.hidden = true;
   elements.parcelLoadProgress.classList.remove("is-indeterminate");
   elements.parcelLoadProgressBar.style.width = "0%";
-}
-
-function updateZoomMetric() {
-  elements.zoomLevel.textContent = map.getZoom();
 }
 
 function summarizeParcels(geojson, taxRate = currentTaxRate) {
@@ -577,7 +584,6 @@ function showTool(toolKey) {
   underutilizedMode = "";
   elements.taxModelResult.hidden = true;
   updateAnalysisMetrics(toolKey);
-  updateZoomMetric();
   if (selectedGeography) {
     loadParcels();
   } else {
@@ -3026,6 +3032,5 @@ elements.downloadMetadata.addEventListener("click", () => {
     "Export metadata downloaded.",
   );
 });
-map.on("zoomend", updateZoomMetric);
 
 loadGeographyChoices("assembly");
