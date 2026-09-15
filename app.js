@@ -1843,58 +1843,74 @@ async function summaryScenarioForDownload(signal) {
   };
 }
 
-async function summaryCsv(signal) {
-  const headers = [
-    "section", "metric", "value", "breakdown_level", "county", "municipality", "jurisdiction",
-    "tax_rate_percent", "parcel_count", "total_assessed_value", "current_tax_total",
-    "split_land_rate_percent", "split_improvement_rate_percent", "hypothetical_tax_total",
-  ];
-  const rows = [];
+async function summaryMarkdown(signal) {
   const summary = latestTaxSummary || {};
   const scenario = await summaryScenarioForDownload(signal);
   const rates = scenario.rates;
   const scenarioSummary = scenario.summary;
-  const addMetric = (metric, value) => rows.push(["summary", metric, value ?? "", "", "", "", "", "", "", "", "", "", "", ""]);
-  addMetric("Selected geography", formatGeographyName());
-  addMetric("Analysis", TOOL_CONFIG.tax.title);
-  addMetric("Parcels loaded", elements.parcelCount.textContent);
-  addMetric("Total land value", summary.landValue);
-  addMetric("Total overall value", summary.totalValue);
-  addMetric("Land / total percent", summary.landValueRatio);
-  addMetric("Qualifying SFH parcel count", summary.sfhCount);
-  addMetric("Mean SFH land / total percent", Number.isFinite(summary.meanSfhLandRatio) ? summary.meanSfhLandRatio * 100 : "");
-  addMetric("Median SFH land / total percent", Number.isFinite(summary.medianSfhLandRatio) ? summary.medianSfhLandRatio * 100 : "");
-  addMetric("Total current tax", summary.currentTaxRevenue);
-  addMetric("Split land rate percent", rates.landRate * 100);
-  addMetric("Split improvement rate percent", rates.improvementRate * 100);
-  addMetric("Hypothetical split-rate tax", scenarioSummary.revenue);
+  const now = new Date().toISOString();
+  const lines = [];
 
-  const appendBreakdowns = (section, byCounty, byJurisdiction, hypothetical = false) => {
-    [...(byCounty || new Map()).entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([county, value]) => {
-      rows.push([section, "County total", "", "county", county, "", county, "", "", "", hypothetical ? "" : value, "", "", hypothetical ? value : ""]);
-    });
-    [...(byJurisdiction || new Map()).values()].sort((a, b) => a.jurisdiction.localeCompare(b.jurisdiction)).forEach((item) => {
-      rows.push([
-        section,
-        hypothetical ? "Hypothetical jurisdiction total" : "Current jurisdiction total",
-        "",
-        "jurisdiction",
-        item.county,
-        item.municipality || "",
-        item.jurisdiction,
-        Number.isFinite(item.rate) ? item.rate * 100 : "",
-        item.parcelCount,
-        hypothetical ? "" : item.totalValue,
-        hypothetical ? "" : item.currentTax,
-        hypothetical ? rates.landRate * 100 : "",
-        hypothetical ? rates.improvementRate * 100 : "",
-        hypothetical ? item.hypotheticalTax : "",
-      ]);
-    });
-  };
-  appendBreakdowns("current_tax", summary.currentTaxByCounty, summary.currentTaxByJurisdiction);
-  appendBreakdowns("hypothetical_tax", scenarioSummary.byCounty, scenarioSummary.byJurisdiction, true);
-  return rowsToCsv(headers, rows);
+  lines.push(`# Parcel Analysis MD — Summary`);
+  lines.push(`Generated: ${now}`);
+  lines.push(``);
+  lines.push(`**Geography:** ${formatGeographyName()}`);
+  lines.push(`**Analysis:** ${TOOL_CONFIG.tax.title}`);
+  lines.push(``);
+  lines.push(`## Key metrics`);
+  const add = (label, value) => lines.push(`- **${label}:** ${value}`);
+  add("Parcels loaded", elements.parcelCount.textContent || "—");
+  add("Total land value", summary.landValue === null ? "—" : formatCompactCurrency(summary.landValue));
+  add("Total overall value", summary.totalValue === null ? "—" : formatCompactCurrency(summary.totalValue));
+  add("Land / total", summary.landValueRatio === null ? "—" : formatPercent(summary.landValueRatio));
+  add("Qualifying SFH parcel count", summary.sfhCount == null ? "—" : summary.sfhCount.toLocaleString());
+  add("Mean SFH land / total", summary.meanSfhLandRatio == null ? "—" : formatPercent(summary.meanSfhLandRatio * 100));
+  add("Median SFH land / total", summary.medianSfhLandRatio == null ? "—" : formatPercent(summary.medianSfhLandRatio * 100));
+  add("Total current tax", summary.currentTaxRevenue == null ? "—" : formatCompactCurrency(summary.currentTaxRevenue));
+  add("Split land rate percent", `${(rates.landRate * 100).toFixed(4)}%`);
+  add("Split improvement rate percent", `${(rates.improvementRate * 100).toFixed(4)}%`);
+  add("Hypothetical split-rate tax", scenarioSummary.revenue == null ? "—" : formatCompactCurrency(scenarioSummary.revenue));
+  lines.push(``);
+
+  // County breakdown
+  lines.push(`## Hypothetical tax by county`);
+  lines.push(`| County | Hypothetical tax |`);
+  lines.push(`|---|---:|`);
+  if (scenarioSummary.byCounty && typeof scenarioSummary.byCounty[Symbol.iterator] === 'function') {
+    for (const [county, value] of scenarioSummary.byCounty) {
+      lines.push(`| ${escapeHtml(county)} | ${formatCompactCurrency(value)} |`);
+    }
+  } else {
+    lines.push(`| Not available | — |`);
+  }
+  lines.push(``);
+
+  // Jurisdiction breakdown
+  lines.push(`## Hypothetical tax by jurisdiction`);
+  lines.push(`| Jurisdiction | Parcel count | Total assessed | Hypothetical tax |`);
+  lines.push(`|---|---:|---:|---:|`);
+  if (scenarioSummary.byJurisdiction && typeof scenarioSummary.byJurisdiction[Symbol.iterator] === 'function') {
+    for (const [jurisdiction, details] of scenarioSummary.byJurisdiction) {
+      const count = details.parcelCount ?? details.parcelCount === 0 ? details.parcelCount : "—";
+      const totalAssessed = details.totalValue ?? (details.landValue ? (details.landValue + (details.improvementValue || 0)) : null);
+      const hypo = details.hypotheticalTax ?? details.hypotheticalTax === 0 ? details.hypotheticalTax : null;
+      lines.push(`| ${escapeHtml(jurisdiction)} | ${count} | ${totalAssessed ? formatCompactCurrency(totalAssessed) : "—"} | ${hypo != null ? formatCompactCurrency(hypo) : "—"} |`);
+    }
+  } else {
+    lines.push(`| Not available | — | — | — |`);
+  }
+  lines.push(``);
+
+  // Definitions
+  lines.push(`## Definitions`);
+  lines.push(`- **Qualifying SFH parcel count:** number of single-family home parcels with valid positive total assessment used for the SFH benchmarks.`);
+  lines.push(`- **Mean / Median SFH land / total:** arithmetic mean and median of qualifying SFH land-assessment-to-total-assessment ratios, expressed as percentages.`);
+  lines.push(`- **Hypothetical split-rate tax:** revenue computed by applying the selected split land and improvement rates to parcel-level assessments.`);
+  lines.push(``);
+  lines.push(`Source: Maryland iMAP parcel layer: ${PARCEL_LAYER_URL}.`);
+  lines.push(`Exported: ${now}`);
+
+  return lines.join("\n");
 }
 
 function metadataText() {
@@ -3016,7 +3032,7 @@ elements.improvementTaxRate.addEventListener("input", () => validateTaxRateInput
 elements.taxModelControls.addEventListener("submit", calculateHypotheticalTax);
 elements.downloadSummary.addEventListener("click", () => {
   runDownload(
-    async (signal) => downloadTextFile(downloadBaseName("summary.csv"), await summaryCsv(signal), "text/csv;charset=utf-8"),
+    async (signal) => downloadTextFile(downloadBaseName("summary.md"), await summaryMarkdown(signal), "text/markdown;charset=utf-8"),
     "Summary statistics downloaded.",
   );
 });
