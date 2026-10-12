@@ -153,7 +153,8 @@ h1 {
   position: relative;
 }
 
-.selection-button {
+.selection-button,
+.selection-card {
   display: grid;
   grid-template-columns: 39px 1fr auto;
   align-items: center;
@@ -164,6 +165,13 @@ h1 {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.65);
   color: var(--ink);
+}
+
+.selection-card {
+  grid-template-columns: 39px 1fr;
+}
+
+.selection-button {
   cursor: pointer;
   text-align: left;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background 160ms ease;
@@ -332,8 +340,29 @@ h1 {
   background: #f7ecd5;
   color: #8b671c;
   font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 700;
+}
+
+.selection-card strong,
+.selection-card small {
+  display: block;
+  text-align: left;
+}
+
+.selection-card strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.selection-card small {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .selection-button .button-arrow {
@@ -342,12 +371,6 @@ h1 {
 
 .selection-button[aria-expanded="true"] .button-arrow {
   transform: rotate(180deg);
-}
-
-.tool-button--tax:hover,
-.tool-button--tax:focus-visible {
-  border-color: rgba(201, 152, 61, 0.58);
-  box-shadow: 0 8px 22px rgba(201, 152, 61, 0.13);
 }
 
 .tool-icon {
@@ -362,39 +385,10 @@ h1 {
   font-size: 20px;
 }
 
-.tool-button--tax .tool-icon {
-  background: #f7ecd5;
-  color: #8b671c;
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.tool-button strong,
-.tool-button small {
-  display: block;
-}
-
-.tool-button strong {
-  font-size: 13px;
-  line-height: 1.35;
-}
-
-.tool-button small {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
 .button-arrow {
   color: var(--green);
   font-size: 18px;
   transition: transform 160ms ease;
-}
-
-.tool-button:hover .button-arrow {
-  transform: translateX(3px);
 }
 
 .data-note {
@@ -434,29 +428,6 @@ h1 {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
-}
-
-.close-button {
-  position: absolute;
-  top: 15px;
-  right: 16px;
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 50%;
-  background: #eef3ef;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 22px;
-  line-height: 1;
-  transition: background 160ms ease, color 160ms ease;
-}
-
-.close-button:hover,
-.close-button:focus-visible {
-  background: var(--mint);
-  color: var(--green-dark);
-  outline: none;
 }
 
 h2 {
@@ -977,16 +948,31 @@ h2 {
   }
 }
 
+@media (max-width: 900px) {
+  .welcome-panel {
+    width: min(340px, calc(50vw - 48px));
+  }
+
+  .tool-panel {
+    width: min(340px, calc(50vw - 48px));
+  }
+}
+
 @media (max-width: 600px) {
   .welcome-panel,
   .tool-panel {
-    top: auto;
     right: 14px;
-    bottom: 14px;
     left: 14px;
     width: auto;
     padding: 20px;
     border-radius: 16px;
+  }
+
+  .welcome-panel {
+    top: 14px;
+    bottom: auto;
+    max-height: 42vh;
+    overflow-y: auto;
   }
 
   .welcome-copy {
@@ -999,18 +985,20 @@ h2 {
   }
 
   .tool-panel {
-    max-height: calc(100vh - 28px);
+    top: auto;
+    bottom: 14px;
+    max-height: 42vh;
     overflow: auto;
   }
 
   .map-status {
-    top: 14px;
-    right: 14px;
-    bottom: auto;
+    display: none;
   }
 
   .acknowledgements {
-    bottom: 14px;
+    top: calc(42vh + 10px);
+    right: auto;
+    bottom: auto;
     left: 14px;
   }
 

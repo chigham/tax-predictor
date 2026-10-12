@@ -272,58 +272,45 @@ const GEOGRAPHY_CONFIG = {
   },
 };
 
-const TOOL_CONFIG = {
-  adu: {
-    kicker: "Residential opportunity",
-    title: "ADU feasibility",
-    description:
-      "Load developed residential and town-house parcels in the current view as a starting point for ADU research.",
-    where:
-      "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND LU IN ('R', 'TH') AND SQFTSTRC > 0",
-    color: "#146b57",
-    fillColor: "#8ed1b4",
-    metrics: [],
-  },
-  tax: {
-    kicker: "Assessment signals",
-    title: "Tax model analyzer",
-    description:
-      "Load Maryland parcels with a positive appraised full value and no exemption class. This tool is for predicting COUNTY LEVEL REAL PROPERTY TAX only, not municipal, state, income, or specialty taxes.",
-    where:
-      "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND NFMTTLVL > 0 AND EXCLASS IS NULL",
-    color: "#9b721e",
-    fillColor: "#e5be72",
-    metrics: [
-      {
-        label: "Land value",
-        format: (summary) => summary.landValue === null ? "—" : formatCompactCurrency(summary.landValue),
-      },
-      {
-        label: "Overall value",
-        format: (summary) => summary.totalValue === null ? "—" : formatCompactCurrency(summary.totalValue),
-      },
-      {
-        label: "Land / total",
-        format: (summary) => summary.landValueRatio === null ? "—" : formatPercent(summary.landValueRatio),
-      },
-      {
-        label: "Current tax",
-        format: (summary) => summary.currentTaxRevenue === null ? "—" : formatCompactCurrency(summary.currentTaxRevenue),
-      },
-      {
-        label: "SFH homes (n)",
-        format: (summary) => summary.sfhCount === null || summary.sfhCount === undefined ? "—" : summary.sfhCount.toLocaleString(),
-      },
-      {
-        label: "SFH land / total (mean)",
-        format: (summary) => summary.meanSfhLandRatio === null || summary.meanSfhLandRatio === undefined ? "—" : formatPercent(summary.meanSfhLandRatio * 100),
-      },
-      {
-        label: "SFH land / total (median)",
-        format: (summary) => summary.medianSfhLandRatio === null || summary.medianSfhLandRatio === undefined ? "—" : formatPercent(summary.medianSfhLandRatio * 100),
-      },
-    ],
-  },
+const TAX_CONFIG = {
+  kicker: "Assessment signals",
+  title: "Tax model analyzer",
+  description:
+    "Load Maryland parcels with a positive appraised full value and no exemption class. This tool is for predicting COUNTY LEVEL REAL PROPERTY TAX only, not municipal, state, income, or specialty taxes.",
+  where:
+    "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND NFMTTLVL > 0 AND EXCLASS IS NULL",
+  color: "#9b721e",
+  fillColor: "#e5be72",
+  metrics: [
+    {
+      label: "Land value",
+      format: (summary) => summary.landValue === null ? "—" : formatCompactCurrency(summary.landValue),
+    },
+    {
+      label: "Overall value",
+      format: (summary) => summary.totalValue === null ? "—" : formatCompactCurrency(summary.totalValue),
+    },
+    {
+      label: "Land / total",
+      format: (summary) => summary.landValueRatio === null ? "—" : formatPercent(summary.landValueRatio),
+    },
+    {
+      label: "Current tax",
+      format: (summary) => summary.currentTaxRevenue === null ? "—" : formatCompactCurrency(summary.currentTaxRevenue),
+    },
+    {
+      label: "SFH homes (n)",
+      format: (summary) => summary.sfhCount === null || summary.sfhCount === undefined ? "—" : summary.sfhCount.toLocaleString(),
+    },
+    {
+      label: "SFH land / total (mean)",
+      format: (summary) => summary.meanSfhLandRatio === null || summary.meanSfhLandRatio === undefined ? "—" : formatPercent(summary.meanSfhLandRatio * 100),
+    },
+    {
+      label: "SFH land / total (median)",
+      format: (summary) => summary.medianSfhLandRatio === null || summary.medianSfhLandRatio === undefined ? "—" : formatPercent(summary.medianSfhLandRatio * 100),
+    },
+  ],
 };
 
 const map = L.map("map", {
@@ -341,7 +328,6 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 const elements = {
-  welcomePanel: document.querySelector(".welcome-panel"),
   toolPanel: document.querySelector("#tool-panel"),
   toolKicker: document.querySelector("#tool-kicker"),
   toolTitle: document.querySelector("#tool-title"),
@@ -368,7 +354,6 @@ const elements = {
   downloadParcels: document.querySelector("#download-parcels"),
   downloadMetadata: document.querySelector("#download-metadata"),
   mapStatus: document.querySelector("#map-status-text"),
-  closeTool: document.querySelector("#close-tool"),
   refreshParcels: document.querySelector("#refresh-parcels"),
   geographyToggle: document.querySelector("#geography-toggle"),
   geographyMenu: document.querySelector("#geography-menu"),
@@ -376,10 +361,6 @@ const elements = {
   geographyTypeSelect: document.querySelector("#geography-type-select"),
   geographyChoiceLabel: document.querySelector("#geography-choice-label"),
   geographyChoiceSelect: document.querySelector("#geography-choice-select"),
-  analysisToggle: document.querySelector("#analysis-toggle"),
-  analysisMenu: document.querySelector("#analysis-menu"),
-  analysisSelection: document.querySelector("#analysis-selection"),
-  analysisSelect: document.querySelector("#analysis-select"),
   underutilizedControl: document.querySelector("#underutilized-control"),
   underutilizedSelect: document.querySelector("#underutilized-select"),
   underutilizedDescription: document.querySelector("#underutilized-description"),
@@ -390,7 +371,6 @@ const elements = {
   acknowledgementsPopover: document.querySelector("#acknowledgements-popover"),
 };
 
-let activeTool = null;
 let parcelLayer = null;
 let geographyLayer = null;
 let geographyFeatures = [];
@@ -482,11 +462,9 @@ function formatCompactCurrency(value) {
   return formatCurrency(number);
 }
 
-function updateAnalysisMetrics(toolKey, summary = null) {
-  const metrics = TOOL_CONFIG[toolKey]?.metrics || [];
-
+function updateAnalysisMetrics(summary = null) {
   elements.analysisMetrics.replaceChildren(
-    ...metrics.map((metric) => {
+    ...TAX_CONFIG.metrics.map((metric) => {
       const card = document.createElement("div");
       card.className = "metric-card";
       const label = document.createElement("span");
@@ -558,48 +536,19 @@ function clearParcelResults() {
   elements.taxDownloadControls.hidden = true;
   setDownloadButtonsDisabled(false);
   elements.parcelCount.textContent = "—";
-  updateAnalysisMetrics(activeTool);
+  updateAnalysisMetrics();
   elements.refreshParcels.disabled = true;
 }
 
-function showTool(toolKey) {
-  const config = TOOL_CONFIG[toolKey];
-  if (!config) return;
-
-  activeTool = toolKey;
+function initializeTaxTool() {
   elements.toolPanel.hidden = false;
-  elements.toolKicker.textContent = config.kicker;
-  elements.toolTitle.textContent = config.title;
-  elements.toolDescription.textContent = config.description;
-  elements.selectedGeography.textContent = selectedGeography
-    ? formatGeographyName(selectedGeography)
-    : "All Maryland";
-  elements.parcelCount.textContent = "—";
-  elements.taxModelControls.hidden = true;
-  elements.underutilizedControl.hidden = true;
-  elements.underutilizedSelect.value = "";
-  updateUnderutilizedDescription();
-  underutilizedMode = "";
-  elements.taxModelResult.hidden = true;
-  updateAnalysisMetrics(toolKey);
-  if (selectedGeography) {
-    loadParcels();
-  } else {
-    clearParcelResults();
-    setStatus(`${config.title} selected. Choose a geography to load parcels.`);
-    updateMapStatus("Choose a geography to load parcels");
-  }
-}
-
-function closeTool() {
-  activeTool = null;
+  elements.toolKicker.textContent = TAX_CONFIG.kicker;
+  elements.toolTitle.textContent = TAX_CONFIG.title;
+  elements.toolDescription.textContent = TAX_CONFIG.description;
+  elements.selectedGeography.textContent = "All Maryland";
   clearParcelResults();
-  elements.toolPanel.hidden = true;
-  updateAnalysisMetrics(null);
-  elements.analysisSelect.value = "";
-  elements.analysisSelection.textContent = "Choose an analysis";
-  elements.parcelCount.textContent = "—";
-  updateMapStatus(selectedGeography ? `${formatGeographyName()} selected` : "Select a filter to begin");
+  setStatus("Choose a geography to load tax analysis results.");
+  updateMapStatus("Choose a geography to load parcels");
 }
 
 function getMapExtent() {
@@ -1198,7 +1147,7 @@ function geographyGeometryForExport(geography) {
   };
 }
 
-function serverParcelExportRequest(toolKey, geography) {
+function serverParcelExportRequest(geography) {
   const bounds = map.getBounds();
   const southwest = webMercatorPoint([bounds.getWest(), bounds.getSouth()]);
   const northeast = webMercatorPoint([bounds.getEast(), bounds.getNorth()]);
@@ -1214,7 +1163,7 @@ function serverParcelExportRequest(toolKey, geography) {
     transparent: "true",
     dpi: "96",
     layers: "show:0",
-    layerDefs: JSON.stringify({ 0: TOOL_CONFIG[toolKey].where }),
+    layerDefs: JSON.stringify({ 0: TAX_CONFIG.where }),
     f: "image",
   });
   const geometry = geographyGeometryForExport(geography);
@@ -1235,9 +1184,9 @@ function serverParcelExportRequest(toolKey, geography) {
   };
 }
 
-async function loadParcelAtPoint(toolKey, latlng, signal) {
+async function loadParcelAtPoint(latlng, signal) {
   const params = new URLSearchParams({
-    where: TOOL_CONFIG[toolKey].where,
+    where: TAX_CONFIG.where,
     geometry: `${latlng.lng},${latlng.lat}`,
     geometryType: "esriGeometryPoint",
     inSR: "4326",
@@ -1279,7 +1228,7 @@ function showParcelLoadingMarker(latlng) {
   }).addTo(map);
 }
 
-function createServerRenderedParcelLayer(toolKey, geography) {
+function createServerRenderedParcelLayer(geography) {
   const layer = L.layerGroup();
   let refreshTimer = null;
   let refreshRequest = null;
@@ -1298,12 +1247,12 @@ function createServerRenderedParcelLayer(toolKey, geography) {
     parcelClickRequest = request;
 
     try {
-      const feature = await loadParcelAtPoint(toolKey, event.latlng, request.signal);
+      const feature = await loadParcelAtPoint(event.latlng, request.signal);
       if (!feature || parcelClickRequest !== request || !map.hasLayer(layer)) return;
       const popup = L.popup({ className: "parcel-tooltip", maxWidth: 280 })
         .setLatLng(event.latlng)
-        .setContent(popupMarkup(feature.properties || {}, toolKey));
-      openParcelPopup = { popup, properties: feature.properties || {}, toolKey };
+        .setContent(popupMarkup(feature.properties || {}));
+      openParcelPopup = { popup, properties: feature.properties || {} };
       popup.once("remove", () => {
         if (openParcelPopup?.popup === popup) openParcelPopup = null;
       });
@@ -1328,7 +1277,7 @@ function createServerRenderedParcelLayer(toolKey, geography) {
       refreshRequest = request;
       const bounds = map.getBounds();
       try {
-        const exportRequest = serverParcelExportRequest(toolKey, geography);
+        const exportRequest = serverParcelExportRequest(geography);
         const response = await fetch(exportRequest.url, {
           ...exportRequest.options,
           signal: request.signal,
@@ -1385,12 +1334,11 @@ function createServerRenderedParcelLayer(toolKey, geography) {
   return layer;
 }
 
-function buildParcelQuery(toolKey, geography = selectedGeography) {
+function buildParcelQuery(geography = selectedGeography) {
   const extent = getMapExtent();
-  const config = TOOL_CONFIG[toolKey];
   const geographyGeometry = geographyGeometryForQuery(geography);
   const params = new URLSearchParams({
-    where: config.where,
+    where: TAX_CONFIG.where,
     geometry: geographyGeometry
       ? JSON.stringify(geographyGeometry)
       : `${extent.xmin},${extent.ymin},${extent.xmax},${extent.ymax}`,
@@ -1420,8 +1368,8 @@ function buildParcelQuery(toolKey, geography = selectedGeography) {
   };
 }
 
-async function loadGeographyParcelIds(toolKey, geography, signal) {
-  const idQuery = buildParcelQuery(toolKey, geography);
+async function loadGeographyParcelIds(geography, signal) {
+  const idQuery = buildParcelQuery(geography);
   const idParams = new URLSearchParams(idQuery.options.body);
   idParams.delete("outFields");
   idParams.delete("outSR");
@@ -1445,9 +1393,9 @@ async function loadGeographyParcelIds(toolKey, geography, signal) {
   return idPayload.objectIds || [];
 }
 
-async function loadGeographyParcels(toolKey, geography, signal, objectIds = null, onProgress = null) {
-  const idQuery = buildParcelQuery(toolKey, geography);
-  const parcelIds = objectIds || await loadGeographyParcelIds(toolKey, geography, signal);
+async function loadGeographyParcels(geography, signal, objectIds = null, onProgress = null) {
+  const idQuery = buildParcelQuery(geography);
+  const parcelIds = objectIds || await loadGeographyParcelIds(geography, signal);
   const features = [];
   const batchSize = 500;
 
@@ -1487,8 +1435,8 @@ async function loadGeographyParcels(toolKey, geography, signal, objectIds = null
   };
 }
 
-async function loadGeographyParcelAttributes(toolKey, geography, objectIds, signal, onProgress = null) {
-  const idQuery = buildParcelQuery(toolKey, geography);
+async function loadGeographyParcelAttributes(geography, objectIds, signal, onProgress = null) {
+  const idQuery = buildParcelQuery(geography);
   const parcelIds = objectIds || [];
   const features = [];
   const batchSize = 500;
@@ -1524,8 +1472,8 @@ async function loadGeographyParcelAttributes(toolKey, geography, objectIds, sign
   return { type: "FeatureCollection", features };
 }
 
-async function loadParcelFeaturesByIdsInView(toolKey, objectIds, signal) {
-  const query = buildParcelQuery(toolKey, null);
+async function loadParcelFeaturesByIdsInView(objectIds, signal) {
+  const query = buildParcelQuery(null);
   const baseParams = new URL(query.url).searchParams;
   const features = [];
   const batchSize = 500;
@@ -1551,8 +1499,8 @@ async function loadParcelFeaturesByIdsInView(toolKey, objectIds, signal) {
   return { type: "FeatureCollection", features };
 }
 
-function parcelAggregateRequest(toolKey, geography, statistic) {
-  const query = buildParcelQuery(toolKey, geography);
+function parcelAggregateRequest(geography, statistic) {
+  const query = buildParcelQuery(geography);
   const params = query.options.body
     ? new URLSearchParams(query.options.body)
     : new URL(query.url).searchParams;
@@ -1569,9 +1517,9 @@ function parcelAggregateRequest(toolKey, geography, statistic) {
   return { url: `${query.url.split("?")[0]}?${params.toString()}`, options: {} };
 }
 
-async function loadParcelStatistic(toolKey, geography, field, signal, statisticType = "sum", multiplier = 1) {
+async function loadParcelStatistic(geography, field, signal, statisticType = "sum", multiplier = 1) {
   const statisticName = field === "NFMLNDVL" ? "landValue" : "totalValue";
-  const query = parcelAggregateRequest(toolKey, geography, {
+  const query = parcelAggregateRequest(geography, {
     statisticType,
     onStatisticField: field,
     outStatisticFieldName: statisticName,
@@ -1590,8 +1538,8 @@ async function loadParcelStatistic(toolKey, geography, field, signal, statisticT
   return value === null || value === undefined ? null : Number(value) * multiplier;
 }
 
-function parcelGroupedStatisticsRequest(toolKey, geography, statistics) {
-  const query = buildParcelQuery(toolKey, geography);
+function parcelGroupedStatisticsRequest(geography, statistics) {
+  const query = buildParcelQuery(geography);
   const params = query.options.body
     ? new URLSearchParams(query.options.body)
     : new URL(query.url).searchParams;
@@ -1608,7 +1556,7 @@ function parcelGroupedStatisticsRequest(toolKey, geography, statistics) {
 }
 
 async function loadCurrentTaxRevenue(geography, signal) {
-  const query = parcelGroupedStatisticsRequest("tax", geography, [
+  const query = parcelGroupedStatisticsRequest(geography, [
     { statisticType: "avg", onStatisticField: "NFMTTLVL", outStatisticFieldName: "averageTotal" },
     { statisticType: "count", onStatisticField: "NFMTTLVL", outStatisticFieldName: "totalCount" },
   ]);
@@ -1704,14 +1652,13 @@ async function loadTaxMetrics(
   try {
     updateStatus("Calculating total land value…");
     summary.landValue = await loadParcelStatistic(
-      "tax",
       geography,
       "NFMLNDVL",
       signal,
       useAverageAggregates ? "avg" : "sum",
       useAverageAggregates ? parcelCount : 1,
     );
-    updateAnalysisMetrics("tax", summary);
+    updateAnalysisMetrics(summary);
   } catch (error) {
     if (error.name === "AbortError") throw error;
     console.warn("Could not calculate total land value:", error);
@@ -1723,14 +1670,13 @@ async function loadTaxMetrics(
     // full values directly. Average × matching parcel count is equivalent here
     // because the tax filter requires NFMTTLVL > 0 for every matching parcel.
     summary.totalValue = await loadParcelStatistic(
-      "tax",
       geography,
       "NFMTTLVL",
       signal,
       useAverageAggregates ? "avg" : "sum",
       useAverageAggregates ? parcelCount : 1,
     );
-    updateAnalysisMetrics("tax", summary);
+    updateAnalysisMetrics(summary);
     updateStatus("Calculating land-to-total ratio…");
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (Number.isFinite(summary.landValue) && summary.totalValue > 0) {
@@ -1742,7 +1688,7 @@ async function loadTaxMetrics(
     summary.currentTaxByCounty = currentTax.byCounty;
     summary.currentTaxByJurisdiction = currentTax.byJurisdiction;
     updateCurrentTaxCountyResults(summary.currentTaxByCounty);
-    updateAnalysisMetrics("tax", summary);
+    updateAnalysisMetrics(summary);
   } catch (error) {
     if (error.name === "AbortError") throw error;
     console.warn("Could not calculate total overall value:", error);
@@ -1751,13 +1697,12 @@ async function loadTaxMetrics(
   return summary;
 }
 
-function createParcelStyle(toolKey) {
-  const config = TOOL_CONFIG[toolKey];
+function createParcelStyle() {
   return {
-    color: config.color,
+    color: TAX_CONFIG.color,
     weight: 1,
     opacity: 0.8,
-    fillColor: config.fillColor,
+    fillColor: TAX_CONFIG.fillColor,
     fillOpacity: 0.25,
   };
 }
@@ -1814,8 +1759,8 @@ async function summaryScenarioForDownload(signal) {
   let revenue;
   if (serverRenderedParcelLayer) {
     const [landValue, improvementValue, groupedTax] = await Promise.all([
-      loadParcelValueTotal("tax", selectedGeography, "NFMLNDVL", signal),
-      loadParcelValueTotal("tax", selectedGeography, "NFMIMPVL", signal),
+      loadParcelValueTotal(selectedGeography, "NFMLNDVL", signal),
+      loadParcelValueTotal(selectedGeography, "NFMIMPVL", signal),
       loadGroupedHypotheticalTax(selectedGeography, rates.landRate, rates.improvementRate, signal),
     ]);
     revenue = rates.landRate * landValue + rates.improvementRate * improvementValue;
@@ -1853,7 +1798,7 @@ async function summaryMarkdown(signal) {
   lines.push(`Generated: ${now}`);
   lines.push(``);
   lines.push(`**Geography:** ${formatGeographyName()}`);
-  lines.push(`**Analysis:** ${TOOL_CONFIG.tax.title}`);
+  lines.push(`**Analysis:** ${TAX_CONFIG.title}`);
   lines.push(``);
   lines.push(`## Key metrics`);
   const add = (label, value) => lines.push(`- **${label}:** ${value}`);
@@ -1982,7 +1927,7 @@ async function loadTaxRecordsForDownload(signal) {
   }
   if (!loadedParcelIds.length || !selectedGeography) throw new Error("No parcel selection is available to export.");
   setStatus("Loading parcel attributes for export…", "loading");
-  const idQuery = buildParcelQuery("tax", selectedGeography);
+  const idQuery = buildParcelQuery(selectedGeography);
   const records = [];
   const batchSize = 500;
   for (let start = 0; start < loadedParcelIds.length; start += batchSize) {
@@ -2138,7 +2083,7 @@ function taxPopupDetails(properties) {
   };
 }
 
-function popupMarkup(properties, toolKey = activeTool) {
+function popupMarkup(properties) {
   const address = [
     properties.STRTNUM,
     properties.STRTDIR,
@@ -2151,7 +2096,7 @@ function popupMarkup(properties, toolKey = activeTool) {
     .join(" ");
   const title = displayValue(properties.ADDRESS, address || "Selected parcel");
 
-  const taxDetails = toolKey === "tax" ? taxPopupDetails(properties) : null;
+  const taxDetails = taxPopupDetails(properties);
 
   return `
     <div class="parcel-popup">
@@ -2164,28 +2109,27 @@ function popupMarkup(properties, toolKey = activeTool) {
         <dt>Improvement assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMIMPVL))} ${properties.NFMTTLVL ? `(${((properties.NFMIMPVL / properties.NFMTTLVL) * 100).toFixed(0)}%)` : ""}</dd>
         <dt>Total assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMTTLVL))} ${properties.NFMTTLVL ? `(100%)` : ""}</dd>
         <dt>Zone</dt><dd>${escapeHtml(displayValue(properties.ZONING))}</dd>
-        ${taxDetails ? `
         <dt>Applicable tax rate</dt><dd>${escapeHtml(formatTaxRate(taxDetails.currentRate))}</dd>
         <dt>Predicted tax bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.currentTax))}</dd>
-        <dt>Hypothetical split-rate bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.hypotheticalTax))}</dd>` : ""}
+        <dt>Hypothetical split-rate bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.hypotheticalTax))}</dd>
       </dl>
     </div>`;
 }
 
 function refreshOpenParcelPopup() {
   if (openParcelPopup) {
-    openParcelPopup.popup.setContent(popupMarkup(openParcelPopup.properties, openParcelPopup.toolKey));
+    openParcelPopup.popup.setContent(popupMarkup(openParcelPopup.properties));
     openParcelPopup.popup.update();
   }
   if (!parcelLayer || typeof parcelLayer.eachLayer !== "function") return;
   parcelLayer.eachLayer((layer) => {
     if (typeof layer.isPopupOpen === "function" && layer.isPopupOpen()) {
-      layer.setPopupContent(popupMarkup(layer.feature?.properties || {}, activeTool));
+      layer.setPopupContent(popupMarkup(layer.feature?.properties || {}));
     }
   });
 }
 
-async function renderParcels(geojson, toolKey, geography = null, summary = null, countOverride = null) {
+async function renderParcels(geojson, geography = null, summary = null, countOverride = null) {
   if (parcelLayer) {
     map.removeLayer(parcelLayer);
   }
@@ -2195,13 +2139,13 @@ async function renderParcels(geojson, toolKey, geography = null, summary = null,
     geography,
   );
   if (serverRenderedParcelLayer) {
-    parcelLayer = createServerRenderedParcelLayer(toolKey, geography).addTo(map);
+    parcelLayer = createServerRenderedParcelLayer(geography).addTo(map);
     await parcelLayer.refresh();
   } else {
     parcelLayer = L.geoJSON(geojson, {
       style: (feature) => {
-        const style = createParcelStyle(toolKey);
-        if (toolKey === "tax" && underutilizedMode && feature.properties?.underutilizedMatch) {
+        const style = createParcelStyle();
+        if (underutilizedMode && feature.properties?.underutilizedMatch) {
           style.color = "#e56b2f";
           style.fillColor = "#f4a261";
           style.weight = 2.5;
@@ -2210,12 +2154,12 @@ async function renderParcels(geojson, toolKey, geography = null, summary = null,
         return style;
       },
       onEachFeature: (feature, layer) => {
-        layer.bindPopup(popupMarkup(feature.properties || {}, toolKey), {
+        layer.bindPopup(popupMarkup(feature.properties || {}), {
           className: "parcel-tooltip",
           maxWidth: 280,
         });
         layer.on({
-          click: () => layer.setPopupContent(popupMarkup(feature.properties || {}, toolKey)),
+          click: () => layer.setPopupContent(popupMarkup(feature.properties || {})),
           mouseover: (event) => event.target.setStyle({ weight: 2, fillOpacity: 0.48 }),
           mouseout: (event) => parcelLayer.resetStyle(event.target),
         });
@@ -2227,10 +2171,8 @@ async function renderParcels(geojson, toolKey, geography = null, summary = null,
   elements.parcelCount.textContent = count.toLocaleString();
   // Recalculate from the rendered features so the final values honor the
   // center-in-boundary check used by selected-geography results.
-  const analysisSummary = summary || (toolKey === "tax"
-    ? summarizeTaxParcels(geojson)
-    : summarizeParcels(geojson));
-  updateAnalysisMetrics(toolKey, analysisSummary);
+  const analysisSummary = summary || summarizeTaxParcels(geojson);
+  updateAnalysisMetrics(analysisSummary);
   updateMapStatus(
     geography
       ? `${count.toLocaleString()} parcels shown for ${formatGeographyName(geography)}`
@@ -2240,7 +2182,7 @@ async function renderParcels(geojson, toolKey, geography = null, summary = null,
 }
 
 function prepareTaxModelControls() {
-  if (activeTool !== "tax" || !loadedTaxParcels) return;
+  if (!loadedTaxParcels) return;
   const defaultRate = (Number.isFinite(currentTaxRate) ? currentTaxRate : 0.01) * 100;
   elements.landTaxRate.value = defaultRate.toFixed(4);
   elements.improvementTaxRate.value = defaultRate.toFixed(4);
@@ -2361,7 +2303,7 @@ async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
     const request = new AbortController();
     underutilizedGeometryRequest = request;
     try {
-      const payload = await loadParcelFeaturesByIdsInView("tax", matchingIds, request.signal);
+      const payload = await loadParcelFeaturesByIdsInView(matchingIds, request.signal);
       if (updateId !== underutilizedUpdateId || underutilizedGeometryRequest !== request) return;
       const visibleMatches = payload.features.filter((feature) => {
         const item = {
@@ -2379,7 +2321,7 @@ async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
       });
       underutilizedVectorLayer = L.geoJSON({ type: "FeatureCollection", features: visibleMatches }, {
         style: () => ({ color: "#e56b2f", fillColor: "#f4a261", weight: 2.5, fillOpacity: 0.58 }),
-        onEachFeature: (feature, layer) => layer.bindPopup(popupMarkup(feature.properties || {}, "tax"), {
+        onEachFeature: (feature, layer) => layer.bindPopup(popupMarkup(feature.properties || {}), {
           className: "parcel-tooltip",
           maxWidth: 280,
         }),
@@ -2393,7 +2335,7 @@ async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
   }
 
   parcelLayer.setStyle((feature) => {
-    const style = createParcelStyle("tax");
+    const style = createParcelStyle();
     if (underutilizedMode && feature.properties?.underutilizedMatch) {
       style.color = "#e56b2f"; style.fillColor = "#f4a261"; style.weight = 2.5; style.fillOpacity = 0.58;
     }
@@ -2401,8 +2343,8 @@ async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
   });
 }
 
-async function loadParcelValueTotal(toolKey, geography, field, signal) {
-  const query = parcelAggregateRequest(toolKey, geography, [
+async function loadParcelValueTotal(geography, field, signal) {
+  const query = parcelAggregateRequest(geography, [
     { statisticType: "avg", onStatisticField: field, outStatisticFieldName: "averageValue" },
     { statisticType: "count", onStatisticField: field, outStatisticFieldName: "valueCount" },
   ]);
@@ -2422,7 +2364,7 @@ async function loadParcelValueTotal(toolKey, geography, field, signal) {
 }
 
 async function loadGroupedHypotheticalTax(geography, landRate, improvementRate, signal) {
-  const query = parcelGroupedStatisticsRequest("tax", geography, [
+  const query = parcelGroupedStatisticsRequest(geography, [
     { statisticType: "avg", onStatisticField: "NFMLNDVL", outStatisticFieldName: "averageLand" },
     { statisticType: "count", onStatisticField: "NFMLNDVL", outStatisticFieldName: "landCount" },
     { statisticType: "avg", onStatisticField: "NFMIMPVL", outStatisticFieldName: "averageImprovement" },
@@ -2526,8 +2468,8 @@ async function calculateHypotheticalTax(event) {
     let hypotheticalBreakdown;
     if (serverRenderedParcelLayer) {
       const [landValue, improvementValue] = await Promise.all([
-        loadParcelValueTotal("tax", selectedGeography, "NFMLNDVL", controller.signal),
-        loadParcelValueTotal("tax", selectedGeography, "NFMIMPVL", controller.signal),
+        loadParcelValueTotal(selectedGeography, "NFMLNDVL", controller.signal),
+        loadParcelValueTotal(selectedGeography, "NFMIMPVL", controller.signal),
       ]);
       hypotheticalRevenue = landRate * landValue + improvementRate * improvementValue;
     } else {
@@ -2609,10 +2551,8 @@ async function calculateHypotheticalTax(event) {
 }
 
 async function loadParcels() {
-  if (!activeTool || !selectedGeography) return;
-  const toolAtRequestStart = activeTool;
+  if (!selectedGeography) return;
   const geographyAtRequestStart = selectedGeography;
-  const config = TOOL_CONFIG[toolAtRequestStart];
 
   if (currentRequest) currentRequest.abort();
   if (taxScenarioRequest) {
@@ -2667,182 +2607,118 @@ async function loadParcels() {
   elements.taxCurrentCountyResults.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
   elements.refreshParcels.disabled = true;
-  updateAnalysisMetrics(toolAtRequestStart);
-  setStatus(
-    geographyAtRequestStart
-      ? `Counting parcels for ${formatGeographyName(geographyAtRequestStart)}…`
-      : "Querying parcels in the current map view…",
-    "loading",
-  );
-  updateMapStatus(
-    geographyAtRequestStart ? "Counting matching parcels…" : "Loading parcel boundaries…",
-  );
-  showParcelLoadProgress(
-    geographyAtRequestStart ? "Counting parcels…" : "Loading parcel shapes…",
-    0,
-    null,
-    true,
-  );
+  updateAnalysisMetrics();
+  setStatus(`Counting parcels for ${formatGeographyName(geographyAtRequestStart)}…`, "loading");
+  updateMapStatus("Counting matching parcels…");
+  showParcelLoadProgress("Counting parcels…", 0, null, true);
 
   try {
-    let payload;
-    let queryWasTruncated = false;
+    const objectIds = await loadGeographyParcelIds(geographyAtRequestStart, request.signal);
+    elements.parcelCount.textContent = objectIds.length.toLocaleString();
+    loadedParcelIds = objectIds;
+    showParcelLoadProgress("Loading parcel shapes…", 0, objectIds.length);
+
+    const usesServerRendering = shouldUseServerRenderedParcels(
+      elements.geographyTypeSelect.value,
+      geographyAtRequestStart,
+    );
+    const taxMetricsPromise = loadTaxMetrics(
+      elements.geographyTypeSelect.value,
+      geographyAtRequestStart,
+      objectIds.length,
+      request.signal,
+      (message) => {
+        setStatus(message, "loading");
+        updateMapStatus(message);
+      },
+      usesServerRendering,
+    );
     let taxSummary = null;
-    let objectIds = null;
-    let taxMetricsPromise = null;
     let taxBenchmarkPromise = null;
-    if (geographyAtRequestStart) {
-      objectIds = await loadGeographyParcelIds(
-        toolAtRequestStart,
+    if (usesServerRendering) {
+      taxBenchmarkPromise = loadGeographyParcelAttributes(
+        geographyAtRequestStart,
+        objectIds,
+        request.signal,
+        (loaded, total) => showParcelLoadProgress("Calculating SFH benchmarks…", loaded, total),
+      );
+    } else {
+      showParcelLoadProgress("Calculating parcel metrics…", 0, null, true);
+      taxSummary = await taxMetricsPromise;
+      currentTaxRate = taxSummary.countyTaxRate;
+      latestTaxSummary = taxSummary;
+    }
+
+    setStatus("Loading parcel boundaries…", "loading");
+    updateMapStatus("Loading parcel boundaries…");
+    let payload;
+    if (usesServerRendering) {
+      showParcelLoadProgress("Rendering parcel imagery…", 0, null, true);
+      payload = { type: "FeatureCollection", features: [] };
+    } else {
+      payload = await loadGeographyParcels(
         geographyAtRequestStart,
         request.signal,
+        objectIds,
+        (loaded, total) => showParcelLoadProgress("Loading parcel shapes…", loaded, total),
       );
-      elements.parcelCount.textContent = objectIds.length.toLocaleString();
-      loadedParcelIds = objectIds;
-      showParcelLoadProgress("Loading parcel shapes…", 0, objectIds.length);
+    }
 
-      if (toolAtRequestStart === "tax") {
-        const usesServerRendering = shouldUseServerRenderedParcels(
-          elements.geographyTypeSelect.value,
-          geographyAtRequestStart,
-        );
-        taxMetricsPromise = loadTaxMetrics(
-          elements.geographyTypeSelect.value,
-          geographyAtRequestStart,
-          objectIds.length,
-          request.signal,
-          (message) => {
-            setStatus(message, "loading");
-            updateMapStatus(message);
-          },
-          usesServerRendering,
-        );
-        if (usesServerRendering) {
-          taxBenchmarkPromise = loadGeographyParcelAttributes(
-            toolAtRequestStart,
-            geographyAtRequestStart,
-            objectIds,
-            request.signal,
-            (loaded, total) => showParcelLoadProgress("Calculating SFH benchmarks…", loaded, total),
-          );
-        } else {
-          showParcelLoadProgress("Calculating parcel metrics…", 0, null, true);
-          taxSummary = await taxMetricsPromise;
-          currentTaxRate = taxSummary.countyTaxRate;
-          latestTaxSummary = taxSummary;
-        }
-      }
+    if (currentRequest !== request || selectedGeography !== geographyAtRequestStart) return;
 
-      setStatus("Loading parcel boundaries…", "loading");
-      updateMapStatus("Loading parcel boundaries…");
-      if (shouldUseServerRenderedParcels(elements.geographyTypeSelect.value, geographyAtRequestStart)) {
-        showParcelLoadProgress("Rendering parcel imagery…", 0, null, true);
-        payload = { type: "FeatureCollection", features: [] };
-      } else {
-        payload = await loadGeographyParcels(
-          toolAtRequestStart,
-          geographyAtRequestStart,
-          request.signal,
-          objectIds,
-          (loaded, total) => showParcelLoadProgress("Loading parcel shapes…", loaded, total),
-        );
-      }
+    const filteredPayload = filterParcelsToGeography(payload, geographyAtRequestStart);
+    loadedTaxParcels = filteredPayload;
+    let benchmarkSummary;
+    if (usesServerRendering) {
+      loadedTaxBenchmarkParcels = await taxBenchmarkPromise;
+      benchmarkSummary = sfhLandRatioStatistics(loadedTaxBenchmarkParcels.features);
     } else {
-      const query = buildParcelQuery(toolAtRequestStart, geographyAtRequestStart);
-      const response = await fetch(query.url, {
-        ...query.options,
-        signal: request.signal,
-        headers: { Accept: "application/geo+json, application/json" },
-      });
-      payload = await response.json();
-
-      if (!response.ok || payload.error) {
-        throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
-      }
-      if (payload.type !== "FeatureCollection") {
-        throw new Error("The parcel service did not return GeoJSON.");
-      }
-      queryWasTruncated = Boolean(payload.exceededTransferLimit);
+      loadedTaxBenchmarkParcels = null;
+      benchmarkSummary = sfhLandRatioStatistics(filteredPayload.features);
     }
-
+    taxSummary = taxSummary
+      ? { ...taxSummary, ...benchmarkSummary }
+      : usesServerRendering
+        ? { ...benchmarkSummary }
+        : summarizeTaxParcels(filteredPayload);
     if (
-      activeTool === toolAtRequestStart &&
-      selectedGeography === geographyAtRequestStart
+      !usesServerRendering &&
+      (!Number.isFinite(taxSummary.landValue) || !Number.isFinite(taxSummary.totalValue))
     ) {
-      const filteredPayload = filterParcelsToGeography(payload, geographyAtRequestStart);
-      if (toolAtRequestStart === "tax") {
-        loadedTaxParcels = filteredPayload;
-      }
-      const usesServerRendering = geographyAtRequestStart && shouldUseServerRenderedParcels(
-        elements.geographyTypeSelect.value,
-        geographyAtRequestStart,
-      );
-      let benchmarkSummary = null;
-      if (toolAtRequestStart === "tax") {
-        if (usesServerRendering) {
-          loadedTaxBenchmarkParcels = await taxBenchmarkPromise;
-          benchmarkSummary = sfhLandRatioStatistics(loadedTaxBenchmarkParcels.features);
-        } else {
-          loadedTaxBenchmarkParcels = null;
-          benchmarkSummary = sfhLandRatioStatistics(filteredPayload.features);
-        }
-        taxSummary = taxSummary
-          ? { ...taxSummary, ...benchmarkSummary }
-          : usesServerRendering
-            ? { ...benchmarkSummary }
-            : summarizeTaxParcels(filteredPayload);
-      }
-      if (
-        toolAtRequestStart === "tax" &&
-        !usesServerRendering &&
-        taxSummary &&
-        (!Number.isFinite(taxSummary.landValue) || !Number.isFinite(taxSummary.totalValue))
-      ) {
-        taxSummary = {
-          ...summarizeTaxParcels(filteredPayload),
-          countyTaxRate: taxSummary.countyTaxRate,
-        };
-      }
-      await renderParcels(
-        filteredPayload,
-        toolAtRequestStart,
-        geographyAtRequestStart,
-        usesServerRendering && toolAtRequestStart === "tax"
-          ? { landValue: null, totalValue: null, landValueRatio: null, currentTaxRevenue: null, ...benchmarkSummary }
-          : taxSummary,
-        usesServerRendering ? objectIds.length : null,
-      );
-      hideParcelLoadProgress();
-      if (taxMetricsPromise) {
-        taxSummary = await taxMetricsPromise;
-        if (benchmarkSummary) taxSummary = { ...taxSummary, ...benchmarkSummary };
-        if (
-          !usesServerRendering &&
-          (!Number.isFinite(taxSummary.landValue) || !Number.isFinite(taxSummary.totalValue))
-        ) {
-          taxSummary = {
-            ...summarizeTaxParcels(filteredPayload),
-            countyTaxRate: taxSummary.countyTaxRate,
-          };
-        }
-        currentTaxRate = taxSummary.countyTaxRate;
-        updateCurrentTaxCountyResults(taxSummary.currentTaxByCounty);
-        updateAnalysisMetrics("tax", taxSummary);
-        latestTaxSummary = taxSummary;
-      }
-      if (toolAtRequestStart === "tax" && !taxMetricsPromise) {
-        latestTaxSummary = taxSummary;
-      }
-      if (toolAtRequestStart === "tax") {
-        prepareTaxModelControls();
-        latestTaxSummary = taxSummary;
-        elements.taxDownloadControls.hidden = false;
-      }
-      const limitNotice = queryWasTruncated
-        ? " The service limited this map-view result; zoom in for a complete view."
-        : "";
-      setStatus(`${config.title} is ready.${limitNotice}`, "success");
+      taxSummary = {
+        ...summarizeTaxParcels(filteredPayload),
+        countyTaxRate: taxSummary.countyTaxRate,
+      };
     }
+
+    await renderParcels(
+      filteredPayload,
+      geographyAtRequestStart,
+      usesServerRendering
+        ? { landValue: null, totalValue: null, landValueRatio: null, currentTaxRevenue: null, ...benchmarkSummary }
+        : taxSummary,
+      usesServerRendering ? objectIds.length : null,
+    );
+    hideParcelLoadProgress();
+
+    taxSummary = await taxMetricsPromise;
+    if (benchmarkSummary) taxSummary = { ...taxSummary, ...benchmarkSummary };
+    if (
+      !usesServerRendering &&
+      (!Number.isFinite(taxSummary.landValue) || !Number.isFinite(taxSummary.totalValue))
+    ) {
+      taxSummary = {
+        ...summarizeTaxParcels(filteredPayload),
+        countyTaxRate: taxSummary.countyTaxRate,
+      };
+    }
+    currentTaxRate = taxSummary.countyTaxRate;
+    updateCurrentTaxCountyResults(taxSummary.currentTaxByCounty);
+    updateAnalysisMetrics(taxSummary);
+    latestTaxSummary = taxSummary;
+    prepareTaxModelControls();
+    elements.taxDownloadControls.hidden = false;
+    setStatus(`${TAX_CONFIG.title} is ready.`, "success");
   } catch (error) {
     if (error.name === "AbortError") return;
     hideParcelLoadProgress();
@@ -2853,7 +2729,6 @@ async function loadParcels() {
   } finally {
     if (
       currentRequest === request &&
-      activeTool === toolAtRequestStart &&
       selectedGeography === geographyAtRequestStart
     ) {
       elements.refreshParcels.disabled = false;
@@ -2862,32 +2737,10 @@ async function loadParcels() {
   }
 }
 
-function toggleMenu(menu, button, otherMenu, otherButton) {
-  const isOpen = !menu.hidden;
-  menu.hidden = isOpen;
-  button.setAttribute("aria-expanded", String(!isOpen));
-  if (otherMenu && otherButton) {
-    otherMenu.hidden = true;
-    otherButton.setAttribute("aria-expanded", "false");
-  }
-}
-
 elements.geographyToggle.addEventListener("click", () => {
-  toggleMenu(
-    elements.geographyMenu,
-    elements.geographyToggle,
-    elements.analysisMenu,
-    elements.analysisToggle,
-  );
-});
-
-elements.analysisToggle.addEventListener("click", () => {
-  toggleMenu(
-    elements.analysisMenu,
-    elements.analysisToggle,
-    elements.geographyMenu,
-    elements.geographyToggle,
-  );
+  const isOpen = !elements.geographyMenu.hidden;
+  elements.geographyMenu.hidden = isOpen;
+  elements.geographyToggle.setAttribute("aria-expanded", String(!isOpen));
 });
 
 function setAcknowledgementsOpen(isOpen) {
@@ -2928,13 +2781,8 @@ elements.geographyTypeSelect.addEventListener("change", () => {
   loadGeographyChoices(elements.geographyTypeSelect.value);
   elements.geographyMenu.classList.toggle("selection-menu--county-districts", elements.geographyTypeSelect.value === "countyCouncil");
 
-  if (activeTool) {
-    const config = TOOL_CONFIG[activeTool];
-    setStatus(`${config.title} selected. Choose a geography to load parcels.`);
-    updateMapStatus("Choose a geography to load parcels");
-  } else {
-    updateMapStatus("Choose a geography to begin");
-  }
+  setStatus("Choose a geography to load parcels for tax analysis.");
+  updateMapStatus("Choose a geography to load parcels");
 });
 
 elements.geographyChoiceSelect.addEventListener("change", () => {
@@ -2948,32 +2796,15 @@ elements.geographyChoiceSelect.addEventListener("change", () => {
   elements.geographyToggle.setAttribute("aria-expanded", "false");
   showSelectedGeography();
 
-  if (activeTool) {
-    elements.parcelCount.textContent = "—";
-    updateAnalysisMetrics(activeTool);
-    if (selectedGeography) {
-      loadParcels();
-    } else {
-      clearParcelResults();
-      const config = TOOL_CONFIG[activeTool];
-      setStatus(`${config.title} selected. Choose a geography to load parcels.`);
-      updateMapStatus("Choose a geography to load parcels");
-    }
+  elements.parcelCount.textContent = "—";
+  updateAnalysisMetrics();
+  if (selectedGeography) {
+    loadParcels();
   } else {
-    updateMapStatus(selectedGeography ? `${formatGeographyName()} selected` : "All Maryland selected");
+    clearParcelResults();
+    setStatus("Choose a geography to load tax analysis results.");
+    updateMapStatus("Choose a geography to load parcels");
   }
-});
-
-elements.analysisSelect.addEventListener("change", () => {
-  const toolKey = elements.analysisSelect.value;
-  if (!toolKey) {
-    closeTool();
-    return;
-  }
-  elements.analysisSelection.textContent = TOOL_CONFIG[toolKey].title;
-  elements.analysisMenu.hidden = true;
-  elements.analysisToggle.setAttribute("aria-expanded", "false");
-  showTool(toolKey);
 });
 
 function updateUnderutilizedDescription() {
@@ -3002,7 +2833,7 @@ elements.underutilizedSelect.addEventListener("change", () => {
       underutilizedVectorLayer = null;
     }
     if (parcelLayer && typeof parcelLayer.setStyle === "function") {
-      parcelLayer.setStyle(() => createParcelStyle("tax"));
+      parcelLayer.setStyle(() => createParcelStyle());
     }
     setStatus("Underutilized parcel highlights cleared.", "success");
     return;
@@ -3023,7 +2854,6 @@ elements.underutilizedSelect.addEventListener("change", () => {
 
 updateUnderutilizedDescription();
 
-elements.closeTool.addEventListener("click", closeTool);
 elements.refreshParcels.addEventListener("click", loadParcels);
 elements.landTaxRate.addEventListener("input", () => validateTaxRateInput(elements.landTaxRate));
 elements.improvementTaxRate.addEventListener("input", () => validateTaxRateInput(elements.improvementTaxRate));
@@ -3047,4 +2877,5 @@ elements.downloadMetadata.addEventListener("click", () => {
   );
 });
 
+initializeTaxTool();
 loadGeographyChoices("assembly");

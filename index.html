@@ -29,8 +29,15 @@
             <h1 id="app-title">Parcel Analysis MD</h1>
           </div>
         </div>
-        <p class="welcome-copy">Choose a geographic subset, then add an analysis type to focus the parcel view.</p>
+        <p class="welcome-copy">Choose a geographic subset to focus the tax analysis.</p>
         <div class="selection-controls" aria-label="Parcel filters">
+          <section class="selection-card analysis-card" aria-labelledby="analysis-card-title">
+            <span class="tool-icon tool-icon--analysis" aria-hidden="true">$</span>
+            <span>
+              <small>Analysis type</small>
+              <strong id="analysis-card-title">Tax model analyzer</strong>
+            </span>
+          </section>
           <div class="selection-control">
             <button id="geography-toggle" class="selection-button" type="button" aria-expanded="false" aria-controls="geography-menu">
               <span class="tool-icon" aria-hidden="true">⌖</span>
@@ -54,24 +61,6 @@
                 <option value="">Loading choices…</option>
               </select>
               <p>Parcels are included when their centers fall inside the selected geography.</p>
-            </div>
-          </div>
-          <div class="selection-control">
-            <button id="analysis-toggle" class="selection-button" type="button" aria-expanded="false" aria-controls="analysis-menu">
-              <span class="tool-icon tool-icon--analysis" aria-hidden="true">+</span>
-              <span>
-                <small>Analysis type</small>
-                <strong id="analysis-selection">Choose an analysis</strong>
-              </span>
-              <span class="button-arrow" aria-hidden="true">⌄</span>
-            </button>
-            <div id="analysis-menu" class="selection-menu" hidden>
-              <label for="analysis-select">Choose an analysis type</label>
-              <select id="analysis-select">
-                <option value="">Select an analysis…</option>
-                <option value="adu">ADU feasibility</option>
-                <option value="tax">Tax model analyzer</option>
-              </select>
             </div>
           </div>
           <div id="underutilized-control" class="selection-control underutilized-control" hidden>
@@ -118,7 +107,6 @@
       </section>
 
       <aside id="tool-panel" class="tool-panel" aria-labelledby="tool-title" hidden>
-        <button id="close-tool" class="close-button" type="button" aria-label="Close analysis tool">×</button>
         <p id="tool-kicker" class="eyebrow">Analysis tool</p>
         <h2 id="tool-title">Analysis tool</h2>
         <p id="selected-geography" class="selected-geography">All Maryland</p>
