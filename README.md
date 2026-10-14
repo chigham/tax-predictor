@@ -26,8 +26,7 @@ The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap til
     - non-single-family parcels whose land-to-total ratio exceeds the developed single-family benchmark for the selected geography. 
 All options inherit the tax filter's `EXCLASS IS NULL` exclusion.
 - REST `query` requests constrained to the current map extent or selected geography.
-- Selected-geography requests first retrieve parcel object IDs that spatially intersect the selected geography, then fetch parcel geometry in batches when an interactive layer is appropriate. Parcel centers are used for the final client-side inclusion check; no municipality field is assumed to match a geography selector.
-- Parcel results are reduced to parcels whose calculated centers fall within the selected geography shape.
+- Parcel membership: counties match on the parcel `JURSCODE`, and municipalities match on the parcel town (`TOWNCODE`/`DESCTOWN`, with a few name aliases; Baltimore City uses `JURSCODE = 'BACI'`). These are the same attributes that set each parcel's tax rate. Districts have no parcel attribute, so they include every parcel that spatially intersects the district. A parcel on a district line can therefore count in both districts. The same rule drives parcel IDs, totals, map rendering and exports.
 - GeoJSON parcel rendering with hover states and parcel detail popups for smaller selections.
 - Server-rendered PNG parcel imagery for counties, U.S. congressional districts, and Baltimore City municipality selection. These large selections avoid retaining hundreds of thousands of Leaflet parcel layers; clicking the map lazily queries the parcel under the cursor to open the same popup structure without loading every geometry.
 - Loading, success, error, and request cancellation states.

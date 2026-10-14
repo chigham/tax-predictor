@@ -1057,46 +1057,6 @@ function pointInGeometry(point, geometry) {
   );
 }
 
-let countyBoundaryFeaturesPromise = null;
-
-async function loadCountyBoundaryFeatures() {
-  if (!countyBoundaryFeaturesPromise) {
-    const params = new URLSearchParams({ where: "1=1", outFields: "COUNTY", returnGeometry: "true", outSR: "4326", f: "geojson" });
-    countyBoundaryFeaturesPromise = fetch(`${COUNTY_BOUNDARY_SERVICE_URL}/query?${params.toString()}`, {
-      headers: { Accept: "application/geo+json, application/json" },
-    }).then(async (response) => {
-      const payload = await response.json();
-      if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
-        throw new Error(payload.error?.message || `County service returned ${response.status}.`);
-      }
-      const counties = new Map();
-      (payload.features || []).filter((feature) => feature.geometry && feature.properties?.COUNTY).forEach((feature) => {
-        const county = countyKeyFromStateName(feature.properties.COUNTY);
-        const polygons = feature.geometry.type === "Polygon" ? [feature.geometry.coordinates] : feature.geometry.type === "MultiPolygon" ? feature.geometry.coordinates : [];
-        if (!county || !polygons.length) return;
-        const existing = counties.get(county);
-        if (existing) existing.geometry.coordinates.push(...polygons);
-        else counties.set(county, { type: "Feature", properties: { COUNTY: county }, geometry: { type: "MultiPolygon", coordinates: [...polygons] } });
-      });
-      return [...counties.values()];
-    }).catch((error) => { countyBoundaryFeaturesPromise = null; throw error; });
-  }
-  return countyBoundaryFeaturesPromise;
-}
-
-async function groupParcelsByCounty(features) {
-  const counties = await loadCountyBoundaryFeatures();
-  const groupedParcels = new Map();
-  features.forEach((feature) => {
-    const center = geometryCenter(feature.geometry);
-    const countyFeature = center && counties.find((county) => pointInGeometry(center, county.geometry));
-    const county = countyFeature?.properties?.COUNTY || "Unknown county";
-    if (!groupedParcels.has(county)) groupedParcels.set(county, []);
-    groupedParcels.get(county).push(feature);
-  });
-  return groupedParcels;
-}
-
 function webMercatorPoint([longitude, latitude]) {
   const earthRadius = 20037508.34;
   const x = (longitude * earthRadius) / 180;
@@ -1107,16 +1067,44 @@ function webMercatorPoint([longitude, latitude]) {
   return [x, y];
 }
 
-function filterParcelsToGeography(geojson, geography = selectedGeography) {
-  if (!geography) return geojson;
+// Parcel town names that differ from MUN_NAME in the municipality boundary layer.
+const PARCEL_TOWN_NAMES = {
+  BOONSBORO: "BOONESBORO",
+  BROOKEVILLE: "BROOKVILLE",
+  "CHEVY CHASE SECTION 3": "CHEVY CHASE SEC. 3",
+  "CHEVY CHASE SECTION 5": "CHEVY CHASE SEC. 5",
+  "CHEVY CHASE TOWN": "CHEVY CHASE TOWN OF",
+  FREDERICK: "FREDERICK CITY",
+  "LOCH LYNN HEIGHTS": "LOCH LYNN",
+  "MARTINS ADDITIONS": "MARTINS ADDITION",
+  "NORTH CHEVY CHASE": "CHEVY CHASE NORTH",
+  "ST. MICHAELS": "SAINT MICHAELS",
+};
 
-  return {
-    ...geojson,
-    features: geojson.features.filter((feature) => {
-      const center = geometryCenter(feature.geometry);
-      return center && pointInGeometry(center, geography.geometry);
-    }),
-  };
+// Counties and municipalities are matched by the parcel attributes that also set
+// each parcel's tax rate. Districts have no parcel attribute and are matched spatially.
+function geographyAttributeFilter(geography) {
+  if (!geography) return null;
+  const geographyType = elements.geographyTypeSelect.value;
+  if (geographyType === "county") {
+    const countyKey = countyKeyFromStateName(geography.properties?.COUNTY);
+    const code = Object.keys(COUNTY_BY_JURISDICTION).find((key) => COUNTY_BY_JURISDICTION[key] === countyKey);
+    return code ? `JURSCODE = '${code}'` : null;
+  }
+  if (geographyType === "municipality") {
+    const name = String(geography.properties?.MUN_NAME || "").trim().toUpperCase();
+    if (!name) return null;
+    if (name === "BALTIMORE CITY") return "JURSCODE = 'BACI'";
+    // DESCTOWN is "<JURSCODE> <Town>", e.g. "CARO Denton".
+    const townName = (PARCEL_TOWN_NAMES[name] || name).replace(/'/g, "''");
+    return `TOWNCODE IS NOT NULL AND UPPER(DESCTOWN) LIKE '____ ${townName}'`;
+  }
+  return null;
+}
+
+function parcelWhere(geography) {
+  const attributeFilter = geographyAttributeFilter(geography);
+  return attributeFilter ? `${TAX_CONFIG.where} AND ${attributeFilter}` : TAX_CONFIG.where;
 }
 
 function geographyGeometryForQuery(geography = selectedGeography) {
@@ -1163,10 +1151,10 @@ function serverParcelExportRequest(geography) {
     transparent: "true",
     dpi: "96",
     layers: "show:0",
-    layerDefs: JSON.stringify({ 0: TAX_CONFIG.where }),
+    layerDefs: JSON.stringify({ 0: parcelWhere(geography) }),
     f: "image",
   });
-  const geometry = geographyGeometryForExport(geography);
+  const geometry = geographyAttributeFilter(geography) ? null : geographyGeometryForExport(geography);
   if (geometry) {
     const polygonFilter = {
       geometryType: "esriGeometryPolygon",
@@ -1184,9 +1172,9 @@ function serverParcelExportRequest(geography) {
   };
 }
 
-async function loadParcelAtPoint(latlng, signal) {
+async function loadParcelAtPoint(latlng, signal, where = TAX_CONFIG.where) {
   const params = new URLSearchParams({
-    where: TAX_CONFIG.where,
+    where,
     geometry: `${latlng.lng},${latlng.lat}`,
     geometryType: "esriGeometryPoint",
     inSR: "4326",
@@ -1237,7 +1225,11 @@ function createServerRenderedParcelLayer(geography) {
   let imageOverlay = null;
 
   const handleMapClick = async (event) => {
-    if (geography && !pointInGeometry([event.latlng.lng, event.latlng.lat], geography.geometry)) {
+    if (
+      geography &&
+      !geographyAttributeFilter(geography) &&
+      !pointInGeometry([event.latlng.lng, event.latlng.lat], geography.geometry)
+    ) {
       removeParcelLoadingMarker();
       return;
     }
@@ -1247,7 +1239,7 @@ function createServerRenderedParcelLayer(geography) {
     parcelClickRequest = request;
 
     try {
-      const feature = await loadParcelAtPoint(event.latlng, request.signal);
+      const feature = await loadParcelAtPoint(event.latlng, request.signal, parcelWhere(geography));
       if (!feature || parcelClickRequest !== request || !map.hasLayer(layer)) return;
       const popup = L.popup({ className: "parcel-tooltip", maxWidth: 280 })
         .setLatLng(event.latlng)
@@ -1335,16 +1327,8 @@ function createServerRenderedParcelLayer(geography) {
 }
 
 function buildParcelQuery(geography = selectedGeography) {
-  const extent = getMapExtent();
-  const geographyGeometry = geographyGeometryForQuery(geography);
   const params = new URLSearchParams({
-    where: TAX_CONFIG.where,
-    geometry: geographyGeometry
-      ? JSON.stringify(geographyGeometry)
-      : `${extent.xmin},${extent.ymin},${extent.xmax},${extent.ymax}`,
-    geometryType: geographyGeometry ? "esriGeometryPolygon" : "esriGeometryEnvelope",
-    inSR: geographyGeometry ? "3857" : "4326",
-    spatialRel: "esriSpatialRelIntersects",
+    where: parcelWhere(geography),
     outFields: PARCEL_OUT_FIELDS,
     returnGeometry: "true",
     outSR: "4326",
@@ -1352,19 +1336,31 @@ function buildParcelQuery(geography = selectedGeography) {
     f: "geojson",
   });
 
-  if (geographyGeometry) {
+  if (!geography) {
+    const extent = getMapExtent();
+    params.set("geometry", `${extent.xmin},${extent.ymin},${extent.xmax},${extent.ymax}`);
+    params.set("geometryType", "esriGeometryEnvelope");
+    params.set("inSR", "4326");
+    params.set("spatialRel", "esriSpatialRelIntersects");
     return {
-      url: `${PARCEL_LAYER_URL}/query`,
-      options: {
-        method: "POST",
-        body: params,
-      },
+      url: `${PARCEL_LAYER_URL}/query?${params.toString()}`,
+      options: {},
     };
   }
 
+  if (!geographyAttributeFilter(geography)) {
+    params.set("geometry", JSON.stringify(geographyGeometryForQuery(geography)));
+    params.set("geometryType", "esriGeometryPolygon");
+    params.set("inSR", "3857");
+    params.set("spatialRel", "esriSpatialRelIntersects");
+  }
+
   return {
-    url: `${PARCEL_LAYER_URL}/query?${params.toString()}`,
-    options: {},
+    url: `${PARCEL_LAYER_URL}/query`,
+    options: {
+      method: "POST",
+      body: params,
+    },
   };
 }
 
@@ -2497,20 +2493,7 @@ async function calculateHypotheticalTax(event) {
           controller.signal,
         );
       } else {
-        let groupedParcels;
-        try {
-          groupedParcels = await groupParcelsByCounty(loadedTaxParcels.features);
-        } catch (error) {
-          console.warn("Could not assign parcels to counties:", error);
-          groupedParcels = new Map([["Unknown county", loadedTaxParcels.features]]);
-        }
-        hypotheticalBreakdown = groupHypotheticalTaxFeatures(
-          groupedParcels.size
-            ? [...groupedParcels.values()].flat()
-            : loadedTaxParcels.features,
-          landRate,
-          improvementRate,
-        );
+        hypotheticalBreakdown = groupHypotheticalTaxFeatures(loadedTaxParcels.features, landRate, improvementRate);
       }
 
       [...hypotheticalBreakdown.byCounty.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([county, revenue], index) => {
@@ -2666,33 +2649,32 @@ async function loadParcels() {
 
     if (currentRequest !== request || selectedGeography !== geographyAtRequestStart) return;
 
-    const filteredPayload = filterParcelsToGeography(payload, geographyAtRequestStart);
-    loadedTaxParcels = filteredPayload;
+    loadedTaxParcels = payload;
     let benchmarkSummary;
     if (usesServerRendering) {
       loadedTaxBenchmarkParcels = await taxBenchmarkPromise;
       benchmarkSummary = sfhLandRatioStatistics(loadedTaxBenchmarkParcels.features);
     } else {
       loadedTaxBenchmarkParcels = null;
-      benchmarkSummary = sfhLandRatioStatistics(filteredPayload.features);
+      benchmarkSummary = sfhLandRatioStatistics(payload.features);
     }
     taxSummary = taxSummary
       ? { ...taxSummary, ...benchmarkSummary }
       : usesServerRendering
         ? { ...benchmarkSummary }
-        : summarizeTaxParcels(filteredPayload);
+        : summarizeTaxParcels(payload);
     if (
       !usesServerRendering &&
       (!Number.isFinite(taxSummary.landValue) || !Number.isFinite(taxSummary.totalValue))
     ) {
       taxSummary = {
-        ...summarizeTaxParcels(filteredPayload),
+        ...summarizeTaxParcels(payload),
         countyTaxRate: taxSummary.countyTaxRate,
       };
     }
 
     await renderParcels(
-      filteredPayload,
+      payload,
       geographyAtRequestStart,
       usesServerRendering
         ? { landValue: null, totalValue: null, landValueRatio: null, currentTaxRevenue: null, ...benchmarkSummary }
@@ -2708,7 +2690,7 @@ async function loadParcels() {
       (!Number.isFinite(taxSummary.landValue) || !Number.isFinite(taxSummary.totalValue))
     ) {
       taxSummary = {
-        ...summarizeTaxParcels(filteredPayload),
+        ...summarizeTaxParcels(payload),
         countyTaxRate: taxSummary.countyTaxRate,
       };
     }
