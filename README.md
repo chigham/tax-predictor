@@ -52,21 +52,22 @@ Note on SDAT: The SDAT Real Property Search terms prohibit automated or robotic 
 ## Suggested next steps
 
 Christopher's wish list:
-1. Add a button to download results as-is or with key derived metrics like land:total ratio, mean sfh land:total, etc. - In-progress
-2. Enable Howard County Council districts in geographic subsets. - Done
-3. Customize the actual base tax rates by county so they are not all just 1%. - Done
-4. Optimize optimize optimize. Especially loading parcel geometries if possible. - Always in-progress
-5. Number 1, but with a report.
-6. Centroids in really makes more sense than overlapping geographies. Much cleaner for reporting. Performance is a concern.
-7. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations. - Add this to a separate app
+1. Optimize optimize optimize. Especially loading parcel geometries if possible. - Always in-progress
+2. Add a button to download results as-is or with key derived metrics like land:total ratio, mean sfh land:total, etc., but with a report.
+3. Centroids in really makes more sense than overlapping geographies. Much cleaner for reporting. Performance is a concern.
+4. Make sure underutilized selection follows the same logic as parcel selection for different geographies.
+5. Loading time is slowed by the single-family benchmark loads.
+6. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations. - Add this to a separate app
 
 AI recommendations:
-- 
+1. Condos left out everywhere: this affects every geography, not just congressional districts. The shapes layer appears to leave out about 66,000 taxable condo accounts in Montgomery alone, so current-tax totals there are probably understated. Including condos would mean switching all geographies to the points layer, which is a separate decision.
+2. Load time: the full [US Congressional] District 1 load took several minutes. The single-family benchmark step makes about 750 requests in a row and is the slowest part. That step was already this slow before this change. It would get much faster if the benchmarks were computed with grouped statistics on the server instead of downloading every parcel's attributes.
 
 ## CURRENT BUGS
 
-1. 2 of the services for county council districts are broken (dorchester and charles)
+1. 2 of the services for county council districts may be broken (dorchester and charles).
 2. If a service is broken for county council districts, don't hold everything else back.
+3. Condo are left out from the boundaries layer, but included in the points layer.
 
 ## Run locally
 
