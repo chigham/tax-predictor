@@ -2543,15 +2543,10 @@ function parseRatePercent(text) {
   return isValidRateText(text) ? Number(text) / 100 : Number.NaN;
 }
 
-// Defaults reproduce current revenue: a jurisdiction keeps its actual rate, and a group
-// with mixed rates uses its effective rate, current tax ÷ (land + improvement value).
 function defaultScenarioRate(jurisdictions) {
-  if (new Set(jurisdictions.map((details) => details.rate)).size === 1) {
-    return formatRateInput(jurisdictions[0].rate);
-  }
-  const currentTax = jurisdictions.reduce((sum, details) => sum + details.currentTax, 0);
-  const value = jurisdictions.reduce((sum, details) => sum + details.landValue + details.improvementValue, 0);
-  return formatRateInput(value > 0 ? currentTax / value : 0);
+  return new Set(jurisdictions.map((details) => details.rate)).size === 1
+    ? formatRateInput(jurisdictions[0].rate)
+    : "";
 }
 
 function scenarioRateEntry(rate) {
@@ -2638,7 +2633,7 @@ function computeTaxScenario() {
 }
 
 function formatTaxChange(value, current) {
-  if (!Number.isFinite(value)) return "Check rates";
+  if (!Number.isFinite(value)) return "Enter rates";
   const change = value - current;
   // Ignore differences from rounding default rates to 6 decimal places.
   if (Math.abs(change) <= Math.max(1, Math.abs(current) * 1e-6)) return "No change";
