@@ -323,9 +323,23 @@ const map = L.map("map", {
   preferCanvas: true,
 }).setView(STATE_CENTER, STATE_ZOOM);
 
-L.control
-  .zoom({ position: "bottomright" })
-  .addTo(map);
+const zoomControl = L.control.zoom({ position: "bottomright" }).addTo(map);
+const zoomLevelIndicator = L.DomUtil.create(
+  "span",
+  "leaflet-control-zoom-level",
+  zoomControl.getContainer(),
+);
+zoomLevelIndicator.setAttribute("role", "status");
+zoomLevelIndicator.setAttribute("aria-live", "polite");
+
+const updateZoomLevel = () => {
+  const zoomLevel = map.getZoom();
+  zoomLevelIndicator.textContent = `Zoom ${zoomLevel}`;
+  zoomLevelIndicator.setAttribute("aria-label", `Map zoom level ${zoomLevel}`);
+};
+
+map.on("zoomend", updateZoomLevel);
+updateZoomLevel();
 
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
