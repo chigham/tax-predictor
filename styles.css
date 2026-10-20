@@ -714,6 +714,64 @@ h2 {
   font-weight: 700;
 }
 
+.tax-model-county-row--county {
+  position: relative;
+  padding-left: 14px;
+}
+
+.tax-county-group > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.tax-county-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tax-county-group > summary::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--green);
+  transform: translateY(-50%);
+  transition: transform 160ms ease;
+}
+
+.tax-county-group[open] > summary::before {
+  transform: translateY(-50%) rotate(90deg);
+}
+
+.tax-county-group > summary:hover span,
+.tax-county-group > summary:focus-visible span {
+  color: var(--green-dark);
+}
+
+.tax-county-group > summary:focus-visible {
+  outline: 2px solid rgba(20, 107, 87, 0.3);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+.tax-county-breakdown {
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.tax-model-county-row--sub {
+  padding: 3px 0 3px 26px;
+  border-top: 0;
+}
+
+.tax-model-county-row--sub strong {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .tax-download-controls {
   margin: 16px 0;
   padding: 13px;

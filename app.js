@@ -24,7 +24,7 @@ const COUNTY_TAX_RATES = {
   "Howard County": {"base": 0.01044, "municipalities":{}},
   "Kent County": {"base": 0.01022, "municipalities":{}},
   "Montgomery County": {"base": 0.007176, "municipalities":{}},  // 0.6706% (base rate) + 0.047% (MCPS-designated)
-  "Prince George's County": {"base": 0.01, "municipalities":{"Berwyn Heights": 0.00867, "Bladensburg": 0.00875, "Bowie": 0.00878, "Brentwood": 0.00919, "Capital Heights": 0.00908, "Cheverly": 0.00902, "College Park": 0.00968, "Colmar Manor": 0.00903, "Cottage City": 0.00929, "District Heights": 0.00923, "Eagle Harbor": 0.00999, "Edmonston": 0.00908, "Fairmount Heights": 0.00937, "Forest Heights": 0.00893, "Glenarden": 0.00892, "Greenbelt": 0.00875, "Hyattsville": 0.00884, "Landover Hills": 0.00907, "Laurel": 0.00867, "Morningside": 0.00909, "Mount Rainier": 0.00879, "New Carrollton": 0.00886, "North Brentwood": 0.0098, "Riverdale Park": 0.00882, "Seat Pleasant": 0.00885, "University Park": 0.00881, "Upper Marlboro": 0.0093}},  // varies by municipality
+  "Prince George's County": {"base": 0.01, "municipalities":{"Berwyn Heights": 0.00867, "Bladensburg": 0.00875, "Bowie": 0.00878, "Brentwood": 0.00919, "Capitol Heights": 0.00908, "Cheverly": 0.00902, "College Park": 0.00968, "Colmar Manor": 0.00903, "Cottage City": 0.00929, "District Heights": 0.00923, "Eagle Harbor": 0.00999, "Edmonston": 0.00908, "Fairmount Heights": 0.00937, "Forest Heights": 0.00893, "Glenarden": 0.00892, "Greenbelt": 0.00875, "Hyattsville": 0.00884, "Landover Hills": 0.00907, "Laurel": 0.00867, "Morningside": 0.00909, "Mount Rainier": 0.00879, "New Carrollton": 0.00886, "North Brentwood": 0.0098, "Riverdale Park": 0.00882, "Seat Pleasant": 0.00885, "University Park": 0.00881, "Upper Marlboro": 0.0093}},  // varies by municipality
   "Queen Anne's County": {"base": 0.008, "municipalities":{"Centreville": 0.0067, "Millington": 0.00715}},  // varies in two municipalities
   "Somerset County": {"base": 0.01, "municipalities":{}},
   "St. Mary's County": {"base": 0.009278, "municipalities":{}},  // 0.8478% (base rate) + 0.056% (fire) + 0.024% (supplemental services)
@@ -529,9 +529,9 @@ function clearParcelResults() {
   elements.taxModelControls.hidden = true;
   elements.taxModelResult.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
-  resetTaxCountyResults(elements.taxModelCountyResults, "Hypothetical tax by county");
+  resetTaxCountyResults(elements.taxModelCountyResults);
   elements.taxModelCountyResults.hidden = true;
-  resetTaxCountyResults(elements.taxCurrentCountyResults, "Current tax by county");
+  resetTaxCountyResults(elements.taxCurrentCountyResults);
   elements.taxCurrentCountyResults.hidden = true;
   elements.taxDownloadControls.hidden = true;
   setDownloadButtonsDisabled(false);
@@ -952,13 +952,18 @@ async function resolveCountyTaxRate(geographyType, geography, signal) {
   return COUNTY_TAX_RATES[countyKey]?.base ?? null;
 }
 
+function municipalRateEntry(county, municipality) {
+  if (!municipality) return null;
+  const boundaryName = MUNICIPALITY_NAMES_BY_PARCEL_TOWN[String(municipality).trim().toUpperCase()];
+  const municipalityName = normalizeMunicipalityName(boundaryName || municipality);
+  return Object.entries(COUNTY_TAX_RATES[county]?.municipalities || {})
+    .find(([name]) => normalizeMunicipalityName(name) === municipalityName) || null;
+}
+
 function taxRateForLocation(county, municipality) {
   const countyRates = COUNTY_TAX_RATES[county];
   if (!countyRates) return null;
-  const municipalityName = normalizeMunicipalityName(municipality);
-  const municipalityEntry = Object.entries(countyRates.municipalities || {})
-    .find(([name]) => normalizeMunicipalityName(name) === municipalityName);
-  return municipalityEntry?.[1] ?? countyRates.base;
+  return municipalRateEntry(county, municipality)?.[1] ?? countyRates.base;
 }
 
 function taxRateForParcel(properties) {
@@ -971,11 +976,12 @@ function taxRateForParcel(properties) {
 
 function taxJurisdictionDetails(properties) {
   const county = COUNTY_BY_JURISDICTION[String(properties.JURSCODE || "").toUpperCase()] || "Unknown county";
-  const municipality = properties.TOWNCODE
+  const parcelMunicipality = properties.TOWNCODE
     ? municipalityNameFromParcelDescription(properties.DESCTOWN)
     : null;
-  const rate = taxRateForLocation(county, municipality);
+  const rate = taxRateForLocation(county, parcelMunicipality);
   const countyRate = COUNTY_TAX_RATES[county]?.base ?? null;
+  const municipality = municipalRateEntry(county, parcelMunicipality)?.[0] ?? null;
   const hasDistinctMunicipalRate = municipality && Number.isFinite(rate)
     && Number.isFinite(countyRate) && rate !== countyRate;
   const jurisdiction = hasDistinctMunicipalRate ? `${county} — ${municipality}` : county;
@@ -1080,9 +1086,11 @@ const PARCEL_TOWN_NAMES = {
   "NORTH CHEVY CHASE": "CHEVY CHASE NORTH",
   "ST. MICHAELS": "SAINT MICHAELS",
 };
+const MUNICIPALITY_NAMES_BY_PARCEL_TOWN = Object.fromEntries(
+  Object.entries(PARCEL_TOWN_NAMES).map(([boundaryName, parcelName]) => [parcelName, boundaryName]),
+);
 
-// Counties and municipalities are matched by the parcel attributes that also set
-// each parcel's tax rate. Districts have no parcel attribute and are matched spatially.
+// Counties and municipalities are matched by the parcel attributes that also set each parcel's tax rate. Districts have no parcel attribute and are matched spatially.
 function geographyAttributeFilter(geography) {
   if (!geography) return null;
   const geographyType = elements.geographyTypeSelect.value;
@@ -1600,32 +1608,83 @@ async function loadCurrentTaxRevenue(geography, signal) {
   };
 }
 
-function updateCurrentTaxCountyResults(byCounty) {
-  const isMultiCountyGeography = ["assembly", "congressional"].includes(elements.geographyTypeSelect.value);
-  resetTaxCountyResults(elements.taxCurrentCountyResults, "Current tax by county");
-  if (!isMultiCountyGeography || !byCounty?.size) {
-    elements.taxCurrentCountyResults.hidden = true;
+const REST_OF_COUNTY_LABEL = "Rest of county";
+
+function taxBreakdownRow(tagName, className, label, amount) {
+  const row = document.createElement(tagName);
+  row.className = className;
+  const name = document.createElement("span");
+  name.textContent = label;
+  const value = document.createElement("strong");
+  value.textContent = formatCompactCurrency(amount);
+  row.append(name, value);
+  return row;
+}
+
+function updateCurrentTaxCountyResults(byJurisdiction) {
+  const container = elements.taxCurrentCountyResults;
+  resetTaxCountyResults(container);
+  if (!byJurisdiction?.size) {
+    container.hidden = true;
     return;
   }
 
-  [...byCounty.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .forEach(([county, revenue]) => {
-      const row = document.createElement("div");
-      row.className = "tax-model-county-row";
-      row.innerHTML = `<span>${escapeHtml(county)}</span><strong>${escapeHtml(formatCompactCurrency(revenue))}</strong>`;
-      elements.taxCurrentCountyResults.append(row);
+  const counties = new Map();
+  byJurisdiction.forEach((details) => {
+    const county = counties.get(details.county)
+      || { name: details.county, total: 0, municipalities: [], restTax: 0, hasRest: false };
+    county.total += details.currentTax;
+    if (details.municipality) {
+      county.municipalities.push(details);
+    } else {
+      county.restTax += details.currentTax;
+      county.hasRest = true;
+    }
+    counties.set(details.county, county);
+  });
+
+  [...counties.values()]
+    .sort((a, b) => b.total - a.total)
+    .forEach((county) => {
+      const countyRowClass = "tax-model-county-row tax-model-county-row--county";
+      if (!county.municipalities.length) {
+        container.append(taxBreakdownRow("div", countyRowClass, county.name, county.total));
+        return;
+      }
+
+      const subRowClass = "tax-model-county-row tax-model-county-row--sub";
+      const breakdown = document.createElement("ul");
+      breakdown.className = "tax-county-breakdown";
+      breakdown.setAttribute("aria-label", `${county.name} breakdown by tax rate`);
+      county.municipalities
+        .sort((a, b) => b.currentTax - a.currentTax)
+        .forEach((details) => breakdown.append(taxBreakdownRow(
+          "li",
+          subRowClass,
+          `${details.municipality} (${formatTaxRate(details.rate)})`,
+          details.currentTax,
+        )));
+      if (county.hasRest) {
+        breakdown.append(taxBreakdownRow(
+          "li",
+          subRowClass,
+          `${REST_OF_COUNTY_LABEL} (${formatTaxRate(COUNTY_TAX_RATES[county.name]?.base)})`,
+          county.restTax,
+        ));
+      }
+
+      const group = document.createElement("details");
+      group.className = "tax-county-group";
+      group.open = true;
+      group.append(taxBreakdownRow("summary", countyRowClass, county.name, county.total), breakdown);
+      container.append(group);
     });
-  elements.taxCurrentCountyResults.hidden = false;
+  container.hidden = false;
 }
 
-function resetTaxCountyResults(container, heading) {
-  container.replaceChildren(
-    Object.assign(document.createElement("p"), {
-      className: "tax-model-breakdown-heading",
-      textContent: heading,
-    }),
-  );
+// Clears breakdown rows while keeping the heading defined in index.html.
+function resetTaxCountyResults(container) {
+  container.replaceChildren(container.querySelector(".tax-model-breakdown-heading"));
 }
 
 async function loadTaxMetrics(
@@ -1642,6 +1701,19 @@ async function loadTaxMetrics(
     landValueRatio: null,
     currentTaxRevenue: null,
   };
+
+  const currentTaxPromise = loadCurrentTaxRevenue(geography, signal)
+    .then((currentTax) => {
+      if (signal.aborted) return;
+      summary.currentTaxRevenue = currentTax.revenue;
+      summary.currentTaxByCounty = currentTax.byCounty;
+      summary.currentTaxByJurisdiction = currentTax.byJurisdiction;
+      updateCurrentTaxCountyResults(currentTax.byJurisdiction);
+      updateAnalysisMetrics(summary);
+    })
+    .catch((error) => {
+      if (error.name !== "AbortError") console.warn("Could not calculate current tax:", error);
+    });
 
   summary.countyTaxRate = await resolveCountyTaxRate(geographyType, geography, signal);
 
@@ -1678,17 +1750,15 @@ async function loadTaxMetrics(
     if (Number.isFinite(summary.landValue) && summary.totalValue > 0) {
       summary.landValueRatio = (summary.landValue / summary.totalValue) * 100;
     }
-    updateStatus("Calculating current tax…");
-    const currentTax = await loadCurrentTaxRevenue(geography, signal);
-    summary.currentTaxRevenue = currentTax.revenue;
-    summary.currentTaxByCounty = currentTax.byCounty;
-    summary.currentTaxByJurisdiction = currentTax.byJurisdiction;
-    updateCurrentTaxCountyResults(summary.currentTaxByCounty);
     updateAnalysisMetrics(summary);
   } catch (error) {
     if (error.name === "AbortError") throw error;
     console.warn("Could not calculate total overall value:", error);
   }
+
+  updateStatus("Calculating current tax…");
+  await currentTaxPromise;
+  if (signal.aborted) throw new DOMException("The request was aborted.", "AbortError");
 
   return summary;
 }
@@ -2483,7 +2553,7 @@ async function calculateHypotheticalTax(event) {
     const geographyType = elements.geographyTypeSelect.value;
     if (geographyType === "assembly" || geographyType === "congressional") {
       elements.taxModelResult.hidden = true;
-      resetTaxCountyResults(elements.taxModelCountyResults, "Hypothetical tax by county");
+      resetTaxCountyResults(elements.taxModelCountyResults);
       elements.taxModelCountyResults.hidden = false;
       if (serverRenderedParcelLayer) {
         hypotheticalBreakdown = await loadGroupedHypotheticalTax(
@@ -2584,9 +2654,9 @@ async function loadParcels() {
   updateUnderutilizedDescription();
   underutilizedMode = "";
   elements.taxModelResult.hidden = true;
-  resetTaxCountyResults(elements.taxModelCountyResults, "Hypothetical tax by county");
+  resetTaxCountyResults(elements.taxModelCountyResults);
   elements.taxModelCountyResults.hidden = true;
-  resetTaxCountyResults(elements.taxCurrentCountyResults, "Current tax by county");
+  resetTaxCountyResults(elements.taxCurrentCountyResults);
   elements.taxCurrentCountyResults.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
   elements.refreshParcels.disabled = true;
@@ -2695,7 +2765,7 @@ async function loadParcels() {
       };
     }
     currentTaxRate = taxSummary.countyTaxRate;
-    updateCurrentTaxCountyResults(taxSummary.currentTaxByCounty);
+    updateCurrentTaxCountyResults(taxSummary.currentTaxByJurisdiction);
     updateAnalysisMetrics(taxSummary);
     latestTaxSummary = taxSummary;
     prepareTaxModelControls();
