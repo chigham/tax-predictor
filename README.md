@@ -57,7 +57,8 @@ Christopher's wish list:
 3. Customize the actual base tax rates by county so they are not all just 1%. - Done
 4. Optimize optimize optimize. Especially loading parcel geometries if possible. - Always in-progress
 5. Number 1, but with a report.
-6. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations. - Add this to a separate app
+6. Centroids in really makes more sense than overlapping geographies. Much cleaner for reporting. Performance is a concern.
+7. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations. - Add this to a separate app
 
 AI recommendations:
 - 
