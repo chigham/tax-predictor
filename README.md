@@ -18,24 +18,23 @@ The app uses [Leaflet](https://leafletjs.com/) for the map and OpenStreetMap til
 - Tax parcel popups include all existing parcel fields plus the applicable county or municipal rate, predicted current tax bill, and a hypothetical split-rate bill. Before a scenario is calculated, the hypothetical bill matches the predicted current bill; after calculation, it uses the entered land and improvement rates.
 - The tax model analyzer provides summary statistics, detailed parcel info, and metadata download.
 - County and municipality tax calculations use the temporary `COUNTY_TAX_RATES` table in `app.js`. Listed municipalities receive their municipality-specific rate; unlisted and unincorporated parcels use the county base rate. Split-rate scenarios use the user-entered rates uniformly across the selected parcels.
-- The tax model analyzer exposes hypothetical split-rate results for separate land and improvements inputs after parcel loading. Smaller selections use the loaded parcel values; large server-rendered selections use geometry-free ArcGIS aggregate statistics. This resolves a critical memory error in the browser when trying to load all leaflet parcels for large geographies like PG County.
-- After tax parcels load, the welcome panel provides an specific parcel subset viewer that highlight different ways to identify  underutilized properties. It cosmetically highlights non-exempt parcels that meet one of the following sets of underutilization criteria:
+- The tax model analyzer exposes hypothetical split-rate results for separate land and improvements inputs. All totals, including split-rate scenarios, come from geometry-free ArcGIS statistics on the parcel points layer, so no geography requires downloading every parcel.
+- After tax parcels load, the welcome panel provides an specific parcel subset viewer that highlight different ways to identify  underutilized properties. It cosmetically highlights non-exempt parcels (visible when zoomed in to parcel shapes) that meet one of the following sets of underutilization criteria:
     - no improvements or vacant land, 
     - land value at least half of total assessed value, or land-dominant, 
     - high-value land-dominant parcels, where land value is at least $1 million, in urban areas, 
-    - non-single-family parcels whose land-to-total ratio exceeds the developed single-family benchmark for the selected geography. 
+    - non-single-family parcels whose land-to-total ratio exceeds the single-family benchmark for the selected geography. 
 All options inherit the tax filter's `EXCLASS IS NULL` exclusion.
-- REST `query` requests constrained to the current map extent or selected geography.
-- Parcel membership: counties match on the parcel `JURSCODE`, and municipalities match on the parcel town (`TOWNCODE`/`DESCTOWN`, with a few name aliases; Baltimore City uses `JURSCODE = 'BACI'`). These are the same attributes that set each parcel's tax rate. Districts have no parcel attribute, so they include every parcel that spatially intersects the district. A parcel on a district line can therefore count in both districts. The same rule drives parcel IDs, totals, map rendering and exports.
-- GeoJSON parcel rendering with hover states and parcel detail popups for smaller selections.
-- Server-rendered PNG parcel imagery for counties, U.S. congressional districts, and Baltimore City municipality selection. These large selections avoid retaining hundreds of thousands of Leaflet parcel layers; clicking the map lazily queries the parcel under the cursor to open the same popup structure without loading every geometry.
+- Single-family home (SFH) benchmark: `LU = 'R'`, `SQFTSTRC > 0`, and `DESCBLDG` is `DWEL Standard Unit`, `DWEL Split Level` or `DWEL Split Foyer`. Row/townhouses (`Center Unit`/`End Unit`), condos and mobile homes are excluded. Count, mean and median land-to-total ratios are computed in one server statistics request.
+- Parcel membership is based on tax account points (one per account, condo units included). Counties match on `JURSCODE`, and municipalities match on the town (`TOWNCODE`/`DESCTOWN`, with a few name aliases; Baltimore City uses `JURSCODE = 'BACI'`). Districts include each account whose point falls inside the district, so every account counts in exactly one district. The same rule drives totals, popups and exports.
+- Parcel map: zoomed out, the parcel map service renders a PNG image; clicking it queries the accounts under the cursor. At zoom 17 and closer, the shapes in view are drawn as vectors. Each account point is attached to the smallest shape containing it, so stacked condo units share one shape and the popup lists every taxable account there. Shapes with no taxable account are hidden; account points with no shape are drawn as small open circles.
 - Loading, success, error, and request cancellation states.
 - Responsive layout for smaller screens. ==This might not apply to every feature.==
 - Acknowledgments
 
 ## Data service
 
-Parcel source: Maryland iMAP, `PlanningCadastre/MD_ParcelBoundaries/MapServer/0`.
+Analysis source: Maryland iMAP parcel points, `PlanningCadastre/MD_PropertyData/MapServer/0` (one point per tax account). Display shapes: `PlanningCadastre/MD_ParcelBoundaries/MapServer/0`.
 
 Geographic sources: Maryland iMAP's `Boundaries/MD_ElectionBoundaries` service provides 2022 U.S. congressional districts (layer 0) and Maryland legislative districts (layer 1). The `Boundaries/MD_PoliticalBoundaries` service provides county boundaries (layer 1, including Baltimore City) and detailed municipality boundaries (layer 5).
 
@@ -67,7 +66,6 @@ AI recommendations:
 
 1. 2 of the services for county council districts may be broken (dorchester and charles).
 2. If a service is broken for county council districts, don't hold everything else back.
-3. Condo are left out from the boundaries layer, but included in the points layer.
 
 ## Run locally
 
