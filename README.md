@@ -56,10 +56,16 @@ Christopher's wish list:
 2. Enable Howard County Council districts in geographic subsets. - Done
 3. Customize the actual base tax rates by county so they are not all just 1%. - Done
 4. Optimize optimize optimize. Especially loading parcel geometries if possible. - Always in-progress
-5. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations. - Add this to a separate app
+5. Number 1, but with a report.
+6. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations. - Add this to a separate app
 
 AI recommendations:
 - 
+
+## CURRENT BUGS
+
+1. 2 of the services for county council districts are broken (dorchester and charles)
+2. If a service is broken for county council districts, don't hold everything else back.
 
 ## Run locally
 
