@@ -411,7 +411,7 @@ h1 {
 .tool-panel {
   top: 32px;
   right: 32px;
-  max-height: calc(100vh - 64px);
+  max-height: calc(100vh - 142px);
   width: min(360px, calc(100vw - 64px));
   overflow-y: auto;
   padding: 26px;
@@ -1125,8 +1125,8 @@ h2 {
 
 .map-status {
   position: absolute;
-  right: 17px;
-  bottom: 19px;
+  right: 52px;
+  bottom: 52px;
   z-index: 400;
   padding: 8px 12px;
   border: 1px solid rgba(255, 255, 255, 0.75);
@@ -1340,7 +1340,7 @@ h2 {
 
   .tool-panel {
     top: auto;
-    bottom: 14px;
+    bottom: 110px;
     max-height: 42vh;
     overflow: auto;
   }
