@@ -341,12 +341,14 @@ const elements = {
   parcelCount: document.querySelector("#parcel-count"),
   analysisMetrics: document.querySelector("#analysis-metrics"),
   taxModelControls: document.querySelector("#tax-model-controls"),
-  landTaxRate: document.querySelector("#land-tax-rate"),
-  improvementTaxRate: document.querySelector("#improvement-tax-rate"),
-  calculateTaxModel: document.querySelector("#calculate-tax-model"),
-  calculateTaxModelLabel: document.querySelector("#calculate-tax-model-label"),
+  taxScopeControl: document.querySelector("#tax-scope-control"),
+  taxScopeSelect: document.querySelector("#tax-scope-select"),
+  neutralRatio: document.querySelector("#neutral-ratio"),
+  applyNeutralRatio: document.querySelector("#apply-neutral-ratio"),
+  resetTaxModel: document.querySelector("#reset-tax-model"),
   taxModelResult: document.querySelector("#tax-model-result"),
   hypotheticalTaxValue: document.querySelector("#hypothetical-tax-value"),
+  hypotheticalTaxDelta: document.querySelector("#hypothetical-tax-delta"),
   taxCurrentCountyResults: document.querySelector("#tax-current-county-results"),
   taxModelCountyResults: document.querySelector("#tax-model-county-results"),
   taxDownloadControls: document.querySelector("#tax-download-controls"),
@@ -378,9 +380,8 @@ let selectedGeography = null;
 let geographyLoadRequest = null;
 let currentRequest = null;
 let currentTaxRate = null;
-let taxScenario = null;
-let taxScenarioSummary = null;
-let taxScenarioRequest = null;
+let taxScenarioModel = null;
+let taxScenarioFrame = 0;
 let downloadRequest = null;
 let openParcelPopup = null;
 let loadedTaxParcels = null;
@@ -483,10 +484,6 @@ function clearParcelResults() {
     currentRequest.abort();
     currentRequest = null;
   }
-  if (taxScenarioRequest) {
-    taxScenarioRequest.abort();
-    taxScenarioRequest = null;
-  }
   if (downloadRequest) {
     downloadRequest.abort();
     downloadRequest = null;
@@ -514,12 +511,8 @@ function clearParcelResults() {
   loadedTaxBenchmarkParcels = null;
   loadedParcelIds = [];
   latestTaxSummary = null;
-  taxScenario = null;
-  taxScenarioSummary = null;
+  taxScenarioModel = null;
   hideParcelLoadProgress();
-  elements.calculateTaxModel.disabled = false;
-  elements.calculateTaxModel.classList.remove("is-loading");
-  elements.calculateTaxModelLabel.textContent = "Calculate scenario";
   elements.underutilizedSelect.disabled = false;
   underutilizedMode = "";
   elements.underutilizedSelect.value = "";
@@ -527,8 +520,8 @@ function clearParcelResults() {
   elements.underutilizedControl.hidden = true;
   currentTaxRate = null;
   elements.taxModelControls.hidden = true;
-  elements.taxModelResult.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
+  elements.hypotheticalTaxDelta.textContent = "";
   resetTaxCountyResults(elements.taxModelCountyResults);
   elements.taxModelCountyResults.hidden = true;
   resetTaxCountyResults(elements.taxCurrentCountyResults);
@@ -1025,10 +1018,14 @@ function summarizeTaxParcels(geojson) {
         ...details,
         parcelCount: 0,
         totalValue: 0,
+        landValue: 0,
+        improvementValue: 0,
         currentTax: 0,
       };
       existing.parcelCount += 1;
       existing.totalValue += totalValue;
+      existing.landValue += Number(properties.NFMLNDVL) || 0;
+      existing.improvementValue += Number(properties.NFMIMPVL) || 0;
       existing.currentTax += countyRevenue;
       byJurisdiction.set(jurisdiction, existing);
       ratedParcels += 1;
@@ -1563,6 +1560,11 @@ async function loadCurrentTaxRevenue(geography, signal) {
   const query = parcelGroupedStatisticsRequest(geography, [
     { statisticType: "avg", onStatisticField: "NFMTTLVL", outStatisticFieldName: "averageTotal" },
     { statisticType: "count", onStatisticField: "NFMTTLVL", outStatisticFieldName: "totalCount" },
+    // Land and improvement totals let split-rate scenarios be recalculated locally.
+    { statisticType: "avg", onStatisticField: "NFMLNDVL", outStatisticFieldName: "averageLand" },
+    { statisticType: "count", onStatisticField: "NFMLNDVL", outStatisticFieldName: "landCount" },
+    { statisticType: "avg", onStatisticField: "NFMIMPVL", outStatisticFieldName: "averageImprovement" },
+    { statisticType: "count", onStatisticField: "NFMIMPVL", outStatisticFieldName: "improvementCount" },
   ]);
   const response = await fetch(query.url, {
     ...query.options,
@@ -1592,10 +1594,18 @@ async function loadCurrentTaxRevenue(geography, signal) {
         ...details,
         parcelCount: 0,
         totalValue: 0,
+        landValue: 0,
+        improvementValue: 0,
         currentTax: 0,
+      };
+      const groupSum = (average, groupCount) => {
+        const value = Number(average) * Number(groupCount);
+        return Number.isFinite(value) ? value : 0;
       };
       existing.parcelCount += count;
       existing.totalValue += total;
+      existing.landValue += groupSum(attributes.averageLand, attributes.landCount);
+      existing.improvementValue += groupSum(attributes.averageImprovement, attributes.improvementCount);
       existing.currentTax += countyRevenue;
       byJurisdiction.set(jurisdiction, existing);
       ratedCount += count;
@@ -1621,6 +1631,39 @@ function taxBreakdownRow(tagName, className, label, amount) {
   return row;
 }
 
+// Groups jurisdiction totals into counties. Each county lists its distinct-rate
+// municipalities (largest current tax first) followed by its rest-of-county entry.
+// Counties are ordered by current tax, largest first.
+function groupJurisdictionsByCounty(byJurisdiction) {
+  const counties = new Map();
+  byJurisdiction.forEach((details) => {
+    const county = counties.get(details.county) || {
+      name: details.county,
+      currentTax: 0,
+      landValue: 0,
+      improvementValue: 0,
+      municipalities: [],
+      rest: null,
+    };
+    county.currentTax += details.currentTax;
+    county.landValue += details.landValue || 0;
+    county.improvementValue += details.improvementValue || 0;
+    if (details.municipality) {
+      county.municipalities.push(details);
+    } else {
+      county.rest = details;
+    }
+    counties.set(details.county, county);
+  });
+  return [...counties.values()]
+    .map((county) => {
+      county.municipalities.sort((a, b) => b.currentTax - a.currentTax);
+      county.jurisdictions = [...county.municipalities, county.rest].filter(Boolean);
+      return county;
+    })
+    .sort((a, b) => b.currentTax - a.currentTax);
+}
+
 function updateCurrentTaxCountyResults(byJurisdiction) {
   const container = elements.taxCurrentCountyResults;
   resetTaxCountyResults(container);
@@ -1629,56 +1672,30 @@ function updateCurrentTaxCountyResults(byJurisdiction) {
     return;
   }
 
-  const counties = new Map();
-  byJurisdiction.forEach((details) => {
-    const county = counties.get(details.county)
-      || { name: details.county, total: 0, municipalities: [], restTax: 0, hasRest: false };
-    county.total += details.currentTax;
-    if (details.municipality) {
-      county.municipalities.push(details);
-    } else {
-      county.restTax += details.currentTax;
-      county.hasRest = true;
+  const countyRowClass = "tax-model-county-row tax-model-county-row--county";
+  const subRowClass = "tax-model-county-row tax-model-county-row--sub";
+  groupJurisdictionsByCounty(byJurisdiction).forEach((county) => {
+    if (!county.municipalities.length) {
+      container.append(taxBreakdownRow("div", countyRowClass, county.name, county.currentTax));
+      return;
     }
-    counties.set(details.county, county);
+
+    const breakdown = document.createElement("ul");
+    breakdown.className = "tax-county-breakdown";
+    breakdown.setAttribute("aria-label", `${county.name} breakdown by tax rate`);
+    county.jurisdictions.forEach((details) => breakdown.append(taxBreakdownRow(
+      "li",
+      subRowClass,
+      `${details.municipality || REST_OF_COUNTY_LABEL} (${formatTaxRate(details.rate)})`,
+      details.currentTax,
+    )));
+
+    const group = document.createElement("details");
+    group.className = "tax-county-group";
+    group.open = true;
+    group.append(taxBreakdownRow("summary", countyRowClass, county.name, county.currentTax), breakdown);
+    container.append(group);
   });
-
-  [...counties.values()]
-    .sort((a, b) => b.total - a.total)
-    .forEach((county) => {
-      const countyRowClass = "tax-model-county-row tax-model-county-row--county";
-      if (!county.municipalities.length) {
-        container.append(taxBreakdownRow("div", countyRowClass, county.name, county.total));
-        return;
-      }
-
-      const subRowClass = "tax-model-county-row tax-model-county-row--sub";
-      const breakdown = document.createElement("ul");
-      breakdown.className = "tax-county-breakdown";
-      breakdown.setAttribute("aria-label", `${county.name} breakdown by tax rate`);
-      county.municipalities
-        .sort((a, b) => b.currentTax - a.currentTax)
-        .forEach((details) => breakdown.append(taxBreakdownRow(
-          "li",
-          subRowClass,
-          `${details.municipality} (${formatTaxRate(details.rate)})`,
-          details.currentTax,
-        )));
-      if (county.hasRest) {
-        breakdown.append(taxBreakdownRow(
-          "li",
-          subRowClass,
-          `${REST_OF_COUNTY_LABEL} (${formatTaxRate(COUNTY_TAX_RATES[county.name]?.base)})`,
-          county.restTax,
-        ));
-      }
-
-      const group = document.createElement("details");
-      group.className = "tax-county-group";
-      group.open = true;
-      group.append(taxBreakdownRow("summary", countyRowClass, county.name, county.total), breakdown);
-      container.append(group);
-    });
   container.hidden = false;
 }
 
@@ -1809,16 +1826,19 @@ function downloadBaseName(suffix) {
   return `parcelanalysismd-${geography || "selected-area"}-${suffix}`;
 }
 
+// Exports still use a single rate set: the "all counties" scenario rates.
 function currentScenarioRates() {
-  return taxScenario || {
-    landRate: Number(elements.landTaxRate.value) / 100,
-    improvementRate: Number(elements.improvementTaxRate.value) / 100,
+  const rates = taxScenarioModel?.rates.all.all;
+  const landRate = parseRatePercent(rates?.land);
+  const improvementRate = parseRatePercent(rates?.improvement);
+  return {
+    landRate: Number.isFinite(landRate) ? landRate : 0.01,
+    improvementRate: Number.isFinite(improvementRate) ? improvementRate : 0.01,
   };
 }
 
 async function summaryScenarioForDownload(signal) {
   const rates = currentScenarioRates();
-  if (taxScenarioSummary) return { rates, summary: taxScenarioSummary };
 
   setStatus("Calculating the default split-rate scenario for export…", "loading");
   let breakdown;
@@ -2134,13 +2154,13 @@ function taxPopupDetails(properties) {
   const currentTax = Number.isFinite(totalValue) && Number.isFinite(currentRate)
     ? totalValue * currentRate
     : null;
-  const hypotheticalParts = [
-    Number.isFinite(landValue) ? landValue * taxScenario?.landRate : null,
-    Number.isFinite(improvementValue) ? improvementValue * taxScenario?.improvementRate : null,
-  ].filter(Number.isFinite);
-  const hypotheticalTax = taxScenario
-    ? (hypotheticalParts.length ? hypotheticalParts.reduce((total, value) => total + value, 0) : null)
-    : currentTax;
+  const scenarioRates = taxScenarioModel ? scenarioRatesFor(taxJurisdictionDetails(properties)) : null;
+  const hypotheticalTax = !taxScenarioModel
+    ? currentTax
+    : scenarioRates
+      ? (Number.isFinite(landValue) ? landValue * scenarioRates.land : 0)
+        + (Number.isFinite(improvementValue) ? improvementValue * scenarioRates.improvement : 0)
+      : null;
 
   return {
     currentRate,
@@ -2249,22 +2269,29 @@ async function renderParcels(geojson, geography = null, summary = null, countOve
 
 function prepareTaxModelControls() {
   if (!loadedTaxParcels) return;
-  const defaultRate = (Number.isFinite(currentTaxRate) ? currentTaxRate : 0.01) * 100;
-  elements.landTaxRate.value = defaultRate.toFixed(4);
-  elements.improvementTaxRate.value = defaultRate.toFixed(4);
-  elements.taxModelResult.hidden = true;
-  elements.hypotheticalTaxValue.textContent = "—";
-  elements.taxModelControls.hidden = false;
+  taxScenarioModel = buildTaxScenarioModel(latestTaxSummary?.currentTaxByJurisdiction);
+  elements.taxModelControls.hidden = !taxScenarioModel;
+  if (taxScenarioModel) {
+    elements.taxScopeSelect.replaceChildren(
+      ...taxScenarioModel.scopes.map((scope) => new Option(taxScenarioScopeLabel(scope, taxScenarioModel), scope)),
+    );
+    elements.taxScopeSelect.value = taxScenarioModel.scope;
+    elements.taxScopeControl.hidden = taxScenarioModel.scopes.length < 2;
+    renderTaxScenario();
+  }
   elements.underutilizedControl.hidden = !(
     loadedTaxParcels?.features?.length || loadedTaxBenchmarkParcels?.features?.length
   );
 }
 
-function validateTaxRateInput(input) {
-  const value = input.value.trim();
+function isValidRateText(text) {
+  const value = String(text ?? "").trim();
   const decimalPlaces = value.includes(".") ? value.split(".")[1].length : 0;
-  const isNumeric = /^(?:\d+\.?\d*|\.\d+)$/.test(value);
-  const isValid = isNumeric && decimalPlaces <= 6 && Number(value) >= 0;
+  return /^(?:\d+\.?\d*|\.\d+)$/.test(value) && decimalPlaces <= 6;
+}
+
+function validateTaxRateInput(input) {
+  const isValid = isValidRateText(input.value);
   input.setCustomValidity(isValid ? "" : "Enter a non-negative rate with no more than 6 decimal places.");
   return isValid;
 }
@@ -2501,106 +2528,300 @@ function groupHypotheticalTaxFeatures(features, landRate, improvementRate) {
   return { byCounty, byJurisdiction };
 }
 
-// Is this optimized?
-async function calculateHypotheticalTax(event) {
-  event.preventDefault();
-  if (!loadedTaxParcels || taxScenarioRequest) return;
+// Split-rate scenario. All inputs are recalculated locally from the per-jurisdiction
+// land and improvement totals loaded with current tax, so edits need no server requests.
+// Rates are stored per scope as the percent text shown in each input:
+//   all          — one rate set for every parcel
+//   county       — one rate set per county, applied to its municipalities too
+//   jurisdiction — one rate set per county remainder and per distinct-rate municipality
 
-  const hasValidRates = [elements.landTaxRate, elements.improvementTaxRate]
-    .every(validateTaxRateInput);
-  if (!hasValidRates) {
-    setStatus("Enter non-negative rates with no more than 6 decimal places.", "error");
-    return;
+function formatRateInput(rate) {
+  return String(Number((rate * 100).toFixed(6)));
+}
+
+function parseRatePercent(text) {
+  return isValidRateText(text) ? Number(text) / 100 : Number.NaN;
+}
+
+// Defaults reproduce current revenue: a jurisdiction keeps its actual rate, and a group
+// with mixed rates uses its effective rate, current tax ÷ (land + improvement value).
+function defaultScenarioRate(jurisdictions) {
+  if (new Set(jurisdictions.map((details) => details.rate)).size === 1) {
+    return formatRateInput(jurisdictions[0].rate);
   }
+  const currentTax = jurisdictions.reduce((sum, details) => sum + details.currentTax, 0);
+  const value = jurisdictions.reduce((sum, details) => sum + details.landValue + details.improvementValue, 0);
+  return formatRateInput(value > 0 ? currentTax / value : 0);
+}
 
-  const landRate = Number(elements.landTaxRate.value) / 100;
-  const improvementRate = Number(elements.improvementTaxRate.value) / 100;
-  if (!Number.isFinite(landRate) || landRate < 0 || !Number.isFinite(improvementRate) || improvementRate < 0) {
-    setStatus("Enter valid non-negative tax rates.", "error");
-    return;
+function scenarioRateEntry(rate) {
+  return { land: rate, improvement: rate };
+}
+
+function defaultTaxScenarioRates(model) {
+  const jurisdictions = model.counties.flatMap((county) => county.jurisdictions);
+  return {
+    all: { all: scenarioRateEntry(defaultScenarioRate(jurisdictions)) },
+    county: Object.fromEntries(model.counties.map((county) => [
+      county.name,
+      scenarioRateEntry(defaultScenarioRate(county.jurisdictions)),
+    ])),
+    jurisdiction: Object.fromEntries(jurisdictions.map((details) => [
+      details.jurisdiction,
+      scenarioRateEntry(formatRateInput(details.rate)),
+    ])),
+  };
+}
+
+function buildTaxScenarioModel(byJurisdiction) {
+  if (!byJurisdiction?.size) return null;
+  const counties = groupJurisdictionsByCounty(byJurisdiction);
+  const sum = (field) => counties.reduce((total, county) => total + county[field], 0);
+  const scopes = [
+    ...(counties.some((county) => county.municipalities.length) ? ["jurisdiction"] : []),
+    "county",
+    ...(counties.length > 1 ? ["all"] : []),
+  ];
+  const model = {
+    counties,
+    currentTax: sum("currentTax"),
+    landValue: sum("landValue"),
+    improvementValue: sum("improvementValue"),
+    scopes,
+    scope: scopes[0],
+    rows: [],
+  };
+  model.rates = defaultTaxScenarioRates(model);
+  return model;
+}
+
+function taxScenarioScopeLabel(scope, model) {
+  if (scope === "all") return "One rate set for all counties";
+  if (scope === "jurisdiction") return "By county and municipality";
+  const label = model.counties.length > 1 ? "By county" : `One rate set for ${model.counties[0].name}`;
+  return model.counties.some((county) => county.municipalities.length)
+    ? `${label} (municipalities included)`
+    : label;
+}
+
+function scenarioRateKey(details, scope = taxScenarioModel.scope) {
+  if (scope === "all") return "all";
+  return scope === "county" ? details.county : details.jurisdiction;
+}
+
+function scenarioRatesFor(details) {
+  const { scope, rates } = taxScenarioModel;
+  const entry = rates[scope][scenarioRateKey(details, scope)];
+  const land = parseRatePercent(entry?.land);
+  const improvement = parseRatePercent(entry?.improvement);
+  return Number.isFinite(land) && Number.isFinite(improvement) ? { land, improvement } : null;
+}
+
+function computeTaxScenario() {
+  const byCounty = new Map();
+  const byJurisdiction = new Map();
+  let total = 0;
+  taxScenarioModel.counties.forEach((county) => {
+    let countyTotal = 0;
+    county.jurisdictions.forEach((details) => {
+      const rates = scenarioRatesFor(details);
+      const tax = rates
+        ? details.landValue * rates.land + details.improvementValue * rates.improvement
+        : Number.NaN;
+      byJurisdiction.set(details.jurisdiction, tax);
+      countyTotal += tax;
+    });
+    byCounty.set(county.name, countyTotal);
+    total += countyTotal;
+  });
+  return { total, byCounty, byJurisdiction };
+}
+
+function formatTaxChange(value, current) {
+  if (!Number.isFinite(value)) return "Check rates";
+  const change = value - current;
+  // Ignore differences from rounding default rates to 6 decimal places.
+  if (Math.abs(change) <= Math.max(1, Math.abs(current) * 1e-6)) return "No change";
+  const sign = change > 0 ? "+" : "−";
+  const percent = current ? ` (${sign}${formatPercent(Math.abs(change / current) * 100)})` : "";
+  return `${sign}${formatCompactCurrency(Math.abs(change))}${percent}`;
+}
+
+function setScenarioValue(amountElement, changeElement, value, current) {
+  amountElement.textContent = Number.isFinite(value) ? formatCompactCurrency(value) : "—";
+  changeElement.textContent = formatTaxChange(value, current);
+}
+
+function updateTaxScenarioResults() {
+  if (!taxScenarioModel) return;
+  const results = computeTaxScenario();
+  setScenarioValue(
+    elements.hypotheticalTaxValue,
+    elements.hypotheticalTaxDelta,
+    results.total,
+    taxScenarioModel.currentTax,
+  );
+  taxScenarioModel.rows.forEach((row) => setScenarioValue(row.amount, row.change, row.read(results), row.current));
+  refreshOpenParcelPopup();
+}
+
+function scheduleTaxScenarioUpdate() {
+  if (taxScenarioFrame) return;
+  taxScenarioFrame = requestAnimationFrame(() => {
+    taxScenarioFrame = 0;
+    updateTaxScenarioResults();
+  });
+}
+
+function scenarioRateInputs(label, rateKey) {
+  const rates = taxScenarioModel.rates[taxScenarioModel.scope][rateKey];
+  const wrapper = document.createElement("div");
+  wrapper.className = "tax-scenario-inputs";
+  [["land", "Land %"], ["improvement", "Impr. %"]].forEach(([field, caption]) => {
+    const fieldLabel = document.createElement("label");
+    const text = document.createElement("span");
+    text.textContent = caption;
+    const input = document.createElement("input");
+    Object.assign(input, {
+      type: "number",
+      min: "0",
+      step: "0.000001",
+      inputMode: "decimal",
+      value: rates[field],
+    });
+    input.setAttribute("aria-label", `${caption} — ${label}`);
+    input.dataset.rateKey = rateKey;
+    input.dataset.rateField = field;
+    fieldLabel.append(text, input);
+    wrapper.append(fieldLabel);
+  });
+  return wrapper;
+}
+
+function scenarioRow({
+  tagName = "div",
+  modifier,
+  label,
+  inputLabel = label,
+  current,
+  read,
+  rateKey = null,
+  toggleTarget = null,
+}) {
+  const row = document.createElement(tagName);
+  row.className = `tax-model-county-row tax-scenario-row ${modifier}`;
+  let name;
+  if (toggleTarget) {
+    name = document.createElement("button");
+    name.type = "button";
+    name.className = "tax-county-toggle";
+    name.setAttribute("aria-expanded", "true");
+    name.setAttribute("aria-controls", toggleTarget);
+  } else {
+    name = document.createElement("span");
   }
+  name.textContent = label;
+  const value = document.createElement("span");
+  value.className = "tax-scenario-value";
+  const amount = document.createElement("strong");
+  const change = document.createElement("small");
+  change.className = "tax-scenario-delta";
+  value.append(amount, change);
+  row.append(name, value);
+  if (rateKey) row.append(scenarioRateInputs(inputLabel, rateKey));
+  taxScenarioModel.rows.push({ amount, change, current, read });
+  return row;
+}
 
-  const controller = new AbortController();
-  taxScenarioRequest = controller;
-  elements.calculateTaxModel.disabled = true;
-  elements.calculateTaxModel.classList.add("is-loading");
-  elements.calculateTaxModelLabel.textContent = "Calculating…";
-  elements.landTaxRate.disabled = true;
-  elements.improvementTaxRate.disabled = true;
-  setStatus("Calculating split-rate scenario…", "loading");
+function renderTaxScenario() {
+  const model = taxScenarioModel;
+  const { scope } = model;
+  const container = elements.taxModelCountyResults;
+  resetTaxCountyResults(container);
+  model.rows = [];
 
-  try {
-    let hypotheticalRevenue;
-    let hypotheticalBreakdown;
-    if (serverRenderedParcelLayer) {
-      const [landValue, improvementValue] = await Promise.all([
-        loadParcelValueTotal(selectedGeography, "NFMLNDVL", controller.signal),
-        loadParcelValueTotal(selectedGeography, "NFMIMPVL", controller.signal),
-      ]);
-      hypotheticalRevenue = landRate * landValue + improvementRate * improvementValue;
-    } else {
-      hypotheticalRevenue = loadedTaxParcels.features.reduce((total, feature) => {
-        const properties = feature.properties || {};
-        const landValue = Number(properties.NFMLNDVL);
-        const improvementValue = Number(properties.NFMIMPVL);
-        return total
-          + (Number.isFinite(landValue) ? landRate * landValue : 0)
-          + (Number.isFinite(improvementValue) ? improvementRate * improvementValue : 0);
-      }, 0);
+  elements.taxModelResult.querySelector(".tax-scenario-inputs")?.remove();
+  if (scope === "all") elements.taxModelResult.append(scenarioRateInputs("All counties", "all"));
+
+  model.counties.forEach((county, index) => {
+    const hasBreakdown = county.municipalities.length > 0;
+    const countyEditable = scope === "county" || (scope === "jurisdiction" && !hasBreakdown);
+    const breakdownId = `tax-scenario-breakdown-${index}`;
+    const countyGroup = document.createElement("section");
+    countyGroup.className = "tax-scenario-county";
+    countyGroup.append(scenarioRow({
+      modifier: "tax-model-county-row--county",
+      label: county.name,
+      current: county.currentTax,
+      read: (results) => results.byCounty.get(county.name),
+      rateKey: countyEditable ? scenarioRateKey(county.rest || { county: county.name }) : null,
+      toggleTarget: hasBreakdown ? breakdownId : null,
+    }));
+    if (!hasBreakdown) {
+      container.append(countyGroup);
+      return;
     }
 
-    elements.hypotheticalTaxValue.textContent = formatCompactCurrency(hypotheticalRevenue);
-    const geographyType = elements.geographyTypeSelect.value;
-    if (geographyType === "assembly" || geographyType === "congressional") {
-      elements.taxModelResult.hidden = true;
-      resetTaxCountyResults(elements.taxModelCountyResults);
-      elements.taxModelCountyResults.hidden = false;
-      if (serverRenderedParcelLayer) {
-        hypotheticalBreakdown = await loadGroupedHypotheticalTax(
-          selectedGeography,
-          landRate,
-          improvementRate,
-          controller.signal,
-        );
-      } else {
-        hypotheticalBreakdown = groupHypotheticalTaxFeatures(loadedTaxParcels.features, landRate, improvementRate);
-      }
+    const breakdown = document.createElement("ul");
+    breakdown.id = breakdownId;
+    breakdown.className = "tax-county-breakdown";
+    breakdown.setAttribute("aria-label", `${county.name} breakdown by tax rate`);
+    county.jurisdictions.forEach((details) => {
+      const label = details.municipality || REST_OF_COUNTY_LABEL;
+      breakdown.append(scenarioRow({
+        tagName: "li",
+        modifier: "tax-model-county-row--sub",
+        label,
+        inputLabel: `${county.name}, ${label}`,
+        current: details.currentTax,
+        read: (results) => results.byJurisdiction.get(details.jurisdiction),
+        rateKey: scope === "jurisdiction" ? details.jurisdiction : null,
+      }));
+    });
+    countyGroup.append(breakdown);
+    container.append(countyGroup);
+  });
+  container.hidden = false;
+  updateTaxScenarioResults();
+}
 
-      [...hypotheticalBreakdown.byCounty.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([county, revenue], index) => {
-        const row = document.createElement("div");
-        row.className = "tax-model-county-row";
-        row.innerHTML = `<span>${escapeHtml(county)}</span><strong>Calculating…</strong>`;
-        elements.taxModelCountyResults.append(row);
-        setTimeout(() => {
-          row.querySelector("strong").textContent = formatCompactCurrency(revenue);
-        }, index * 120);
-      });
-    } else {
-      elements.taxModelResult.hidden = false;
-      hypotheticalBreakdown = groupHypotheticalTaxFeatures(loadedTaxParcels.features, landRate, improvementRate);
-    }
-    taxScenario = { landRate, improvementRate };
-    taxScenarioSummary = {
-      revenue: hypotheticalRevenue,
-      byCounty: hypotheticalBreakdown?.byCounty || new Map(),
-      byJurisdiction: hypotheticalBreakdown?.byJurisdiction || new Map(),
+function revenueNeutralUnits(model) {
+  if (model.scope === "all") return [["all", model]];
+  if (model.scope === "county") return model.counties.map((county) => [county.name, county]);
+  return model.counties.flatMap((county) => county.jurisdictions.map((details) => [details.jurisdiction, details]));
+}
+
+// For land:improvement ratio k, solves improvement rate r so that
+// r × (k × land + improvements) equals each editable row's current tax.
+function applyRevenueNeutralRatio() {
+  const model = taxScenarioModel;
+  if (!model) return;
+  const input = elements.neutralRatio;
+  const ratio = Number(input.value);
+  if (input.value.trim() === "" || !Number.isFinite(ratio) || ratio < 0) {
+    input.setCustomValidity("Enter a non-negative ratio.");
+    input.reportValidity();
+    return;
+  }
+  input.setCustomValidity("");
+  revenueNeutralUnits(model).forEach(([key, unit]) => {
+    const base = ratio * unit.landValue + unit.improvementValue;
+    if (base <= 0) return;
+    const improvementRate = unit.currentTax / base;
+    model.rates[model.scope][key] = {
+      land: formatRateInput(improvementRate * ratio),
+      improvement: formatRateInput(improvementRate),
     };
-    refreshOpenParcelPopup();
-    setStatus("Hypothetical tax calculated from the loaded parcels.", "success");
-  } catch (error) {
-    if (error.name === "AbortError") return;
-    console.error(error);
-    setStatus(`Could not calculate the scenario. ${error.message}`, "error");
-  } finally {
-    if (taxScenarioRequest === controller) {
-      taxScenarioRequest = null;
-      elements.calculateTaxModel.disabled = false;
-      elements.calculateTaxModel.classList.remove("is-loading");
-      elements.calculateTaxModelLabel.textContent = "Calculate scenario";
-      elements.landTaxRate.disabled = false;
-      elements.improvementTaxRate.disabled = false;
-    }
-  }
+  });
+  renderTaxScenario();
+  setStatus(`Applied revenue-neutral rates with land taxed at ${ratio}× the improvement rate.`, "success");
+}
+
+function resetTaxScenario() {
+  if (!taxScenarioModel) return;
+  taxScenarioModel.rates = defaultTaxScenarioRates(taxScenarioModel);
+  renderTaxScenario();
+  setStatus("Scenario reset to current rates.", "success");
 }
 
 async function loadParcels() {
@@ -2608,10 +2829,6 @@ async function loadParcels() {
   const geographyAtRequestStart = selectedGeography;
 
   if (currentRequest) currentRequest.abort();
-  if (taxScenarioRequest) {
-    taxScenarioRequest.abort();
-    taxScenarioRequest = null;
-  }
   if (downloadRequest) {
     downloadRequest.abort();
     downloadRequest = null;
@@ -2637,14 +2854,8 @@ async function loadParcels() {
   loadedParcelIds = [];
   latestTaxSummary = null;
   currentTaxRate = null;
-  taxScenario = null;
-  taxScenarioSummary = null;
+  taxScenarioModel = null;
   hideParcelLoadProgress();
-  elements.calculateTaxModel.disabled = false;
-  elements.calculateTaxModel.classList.remove("is-loading");
-  elements.calculateTaxModelLabel.textContent = "Calculate scenario";
-  elements.landTaxRate.disabled = false;
-  elements.improvementTaxRate.disabled = false;
   elements.underutilizedSelect.disabled = false;
   elements.taxDownloadControls.hidden = true;
   setDownloadButtonsDisabled(false);
@@ -2653,12 +2864,12 @@ async function loadParcels() {
   elements.underutilizedSelect.value = "";
   updateUnderutilizedDescription();
   underutilizedMode = "";
-  elements.taxModelResult.hidden = true;
   resetTaxCountyResults(elements.taxModelCountyResults);
   elements.taxModelCountyResults.hidden = true;
   resetTaxCountyResults(elements.taxCurrentCountyResults);
   elements.taxCurrentCountyResults.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
+  elements.hypotheticalTaxDelta.textContent = "";
   elements.refreshParcels.disabled = true;
   updateAnalysisMetrics();
   setStatus(`Counting parcels for ${formatGeographyName(geographyAtRequestStart)}…`, "loading");
@@ -2907,9 +3118,30 @@ elements.underutilizedSelect.addEventListener("change", () => {
 updateUnderutilizedDescription();
 
 elements.refreshParcels.addEventListener("click", loadParcels);
-elements.landTaxRate.addEventListener("input", () => validateTaxRateInput(elements.landTaxRate));
-elements.improvementTaxRate.addEventListener("input", () => validateTaxRateInput(elements.improvementTaxRate));
-elements.taxModelControls.addEventListener("submit", calculateHypotheticalTax);
+elements.taxModelControls.addEventListener("submit", (event) => event.preventDefault());
+elements.taxModelControls.addEventListener("input", (event) => {
+  const input = event.target;
+  const { rateKey, rateField } = input.dataset || {};
+  if (!rateKey || !taxScenarioModel) return;
+  validateTaxRateInput(input);
+  taxScenarioModel.rates[taxScenarioModel.scope][rateKey][rateField] = input.value;
+  scheduleTaxScenarioUpdate();
+});
+elements.taxModelControls.addEventListener("click", (event) => {
+  const toggle = event.target.closest(".tax-county-toggle");
+  if (!toggle) return;
+  const isExpanded = toggle.getAttribute("aria-expanded") === "true";
+  toggle.setAttribute("aria-expanded", String(!isExpanded));
+  document.getElementById(toggle.getAttribute("aria-controls")).hidden = isExpanded;
+});
+elements.taxScopeSelect.addEventListener("change", () => {
+  if (!taxScenarioModel) return;
+  taxScenarioModel.scope = elements.taxScopeSelect.value;
+  renderTaxScenario();
+});
+elements.applyNeutralRatio.addEventListener("click", applyRevenueNeutralRatio);
+elements.neutralRatio.addEventListener("input", () => elements.neutralRatio.setCustomValidity(""));
+elements.resetTaxModel.addEventListener("click", resetTaxScenario);
 elements.downloadSummary.addEventListener("click", () => {
   runDownload(
     async (signal) => downloadTextFile(downloadBaseName("summary.md"), await summaryMarkdown(signal), "text/markdown;charset=utf-8"),

@@ -29,7 +29,7 @@
             <h1 id="app-title">Parcel Analysis MD</h1>
           </div>
         </div>
-        <p class="welcome-copy">Choose a geographic subset to focus the tax analysis.</p>
+        <p class="welcome-copy">Choose a jurisdictional boundary to focus the tax analysis. Parcel loading takes a few moments.</p>
         <div class="selection-controls" aria-label="Parcel filters">
           <section class="selection-card analysis-card" aria-labelledby="analysis-card-title">
             <span class="tool-icon tool-icon--analysis" aria-hidden="true">$</span>
@@ -135,30 +135,33 @@
         <div id="tax-current-county-results" class="tax-model-county-results" hidden>
           <p class="tax-model-breakdown-heading">Current County Property Tax</p>
         </div>
-        <form id="tax-model-controls" class="tax-model-controls" hidden>
+        <form id="tax-model-controls" class="tax-model-controls" hidden novalidate>
           <p class="controls-heading">Split-rate scenario</p>
-          <p class="controls-copy">Set separate land and improvement rates, then calculate projected annual revenue.</p>
-          <div class="rate-inputs">
-            <label>
-              <span>Land rate (%)</span>
-              <input id="land-tax-rate" type="number" min="0" step="0.000001" inputmode="decimal" value="1" required>
-            </label>
-            <label>
-              <span>Improvement rate (%)</span>
-              <input id="improvement-tax-rate" type="number" min="0" step="0.000001" inputmode="decimal" value="1" required>
-            </label>
+          <p class="controls-copy">Set land and improvement rates (%). Results update as you type and show the change from current tax.</p>
+          <label id="tax-scope-control" class="scenario-field" hidden>
+            <span>Rate scope</span>
+            <select id="tax-scope-select"></select>
+          </label>
+          <div class="scenario-ratio">
+            <label for="neutral-ratio">Revenue-neutral land : improvement ratio</label>
+            <div class="scenario-ratio__controls">
+              <input id="neutral-ratio" type="number" min="0" step="0.1" inputmode="decimal" value="4">
+              <span aria-hidden="true">: 1</span>
+              <button id="apply-neutral-ratio" class="scenario-button" type="button">Apply</button>
+            </div>
+            <p class="scenario-hint">Sets each editable row's rates so its revenue matches current tax.</p>
           </div>
-          <button id="calculate-tax-model" class="secondary-action" type="submit">
-            <span id="calculate-tax-model-label">Calculate scenario</span>
-            <span class="loading-spinner loading-spinner--button" aria-hidden="true"></span>
-          </button>
-          <div id="tax-model-result" class="tax-model-result" hidden>
-            <span>Hypothetical tax</span>
-            <strong id="hypothetical-tax-value">—</strong>
+          <div id="tax-model-result" class="tax-model-result">
+            <span>Hypothetical total</span>
+            <span class="tax-scenario-value">
+              <strong id="hypothetical-tax-value">—</strong>
+              <small id="hypothetical-tax-delta" class="tax-scenario-delta"></small>
+            </span>
           </div>
           <div id="tax-model-county-results" class="tax-model-county-results" hidden>
-            <p class="tax-model-breakdown-heading">Hypothetical tax by county</p>
+            <p class="tax-model-breakdown-heading">Hypothetical County Property Tax</p>
           </div>
+          <button id="reset-tax-model" class="scenario-button scenario-button--wide" type="button">Reset to current rates</button>
         </form>
         <section id="tax-download-controls" class="tax-download-controls" hidden aria-labelledby="tax-download-heading">
           <p id="tax-download-heading" class="controls-heading">Download analysis data</p>
