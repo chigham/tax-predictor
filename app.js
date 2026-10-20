@@ -1060,6 +1060,37 @@ function pointInGeometry(point, geometry) {
   );
 }
 
+function createPointInGeometryTester(geometry) {
+  const polygons = (geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates).map((polygon) => {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const [x, y] of polygon[0]) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    return { polygon, minX, minY, maxX, maxY };
+  });
+  return ([x, y]) => polygons.some(({ polygon, minX, minY, maxX, maxY }) =>
+    x >= minX && x <= maxX && y >= minY && y <= maxY
+    && pointInRing([x, y], polygon[0])
+    && polygon.slice(1).every((hole) => !pointInRing([x, y], hole)));
+}
+
+function filterParcelsByCenter(geojson, geography) {
+  const contains = createPointInGeometryTester(geography.geometry);
+  return {
+    ...geojson,
+    features: geojson.features.filter((feature) => {
+      const center = geometryCenter(feature.geometry);
+      return center && contains(center);
+    }),
+  };
+}
+
 function webMercatorPoint([longitude, latitude]) {
   const earthRadius = 20037508.34;
   const x = (longitude * earthRadius) / 180;
@@ -1087,7 +1118,6 @@ const MUNICIPALITY_NAMES_BY_PARCEL_TOWN = Object.fromEntries(
   Object.entries(PARCEL_TOWN_NAMES).map(([boundaryName, parcelName]) => [parcelName, boundaryName]),
 );
 
-// Counties and municipalities are matched by the parcel attributes that also set each parcel's tax rate. Districts have no parcel attribute and are matched spatially.
 function geographyAttributeFilter(geography) {
   if (!geography) return null;
   const geographyType = elements.geographyTypeSelect.value;
@@ -2881,7 +2911,8 @@ async function loadParcels() {
       elements.geographyTypeSelect.value,
       geographyAtRequestStart,
     );
-    const taxMetricsPromise = loadTaxMetrics(
+    const filterByCenter = !usesServerRendering && !geographyAttributeFilter(geographyAtRequestStart);
+    let taxMetricsPromise = filterByCenter ? null : loadTaxMetrics(
       elements.geographyTypeSelect.value,
       geographyAtRequestStart,
       objectIds.length,
@@ -2901,6 +2932,8 @@ async function loadParcels() {
         request.signal,
         (loaded, total) => showParcelLoadProgress("Calculating SFH benchmarks…", loaded, total),
       );
+    } else if (filterByCenter) {
+      taxSummary = { countyTaxRate: null };
     } else {
       showParcelLoadProgress("Calculating parcel metrics…", 0, null, true);
       taxSummary = await taxMetricsPromise;
@@ -2921,6 +2954,12 @@ async function loadParcels() {
         objectIds,
         (loaded, total) => showParcelLoadProgress("Loading parcel shapes…", loaded, total),
       );
+      if (filterByCenter) {
+        payload = filterParcelsByCenter(payload, geographyAtRequestStart);
+        loadedParcelIds = payload.features.map((feature) => feature.properties?.OBJECTID ?? feature.id);
+        elements.parcelCount.textContent = payload.features.length.toLocaleString();
+        taxMetricsPromise = Promise.resolve({ ...summarizeTaxParcels(payload), countyTaxRate: null });
+      }
     }
 
     if (currentRequest !== request || selectedGeography !== geographyAtRequestStart) return;
