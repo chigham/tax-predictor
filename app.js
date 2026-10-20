@@ -6,7 +6,10 @@ const STATE_ZOOM = 8;
 const MAX_PARCELS_PER_REQUEST = 1000;
 const PARCEL_OUT_FIELDS =
   "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN";
-const UNDERUTILIZED_OUT_FIELDS = "OBJECTID,NFMLNDVL,NFMIMPVL,NFMTTLVL,DESCLU,LU,SQFTSTRC,BLDG_UNITS";
+const PARCEL_POINTS_LAYER_URL =
+  "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0";
+const PARCEL_POINTS_WHERE = "PTYPE NOT IN (20, 21)";
+const UNDERUTILIZED_OUT_FIELDS = "OBJECTID,ACCTID,NFMLNDVL,NFMIMPVL,NFMTTLVL,DESCLU,LU,SQFTSTRC,BLDG_UNITS";
 const COUNTY_TAX_RATES = {
   "Allegany County": {"base": 0.00975, "municipalities":{"Barton": 0.009133, "Cumberland": 0.008195, "Frostburg": 0.00861, "Lonaconing": 0.008756, "Luke": 0.008752, "Midland": 0.009133, "Westernport": 0.009133}},  // varies by municipality
   "Anne Arundel County": {"base": 0.00968, "municipalities":{"Annapolis": 0.00577, "Highland Beach": 0.00938}},  // varies by municipality
@@ -887,6 +890,7 @@ function ringCenter(ring) {
 
 function geometryCenter(geometry) {
   if (!geometry) return null;
+  if (geometry.type === "Point") return geometry.coordinates;
   if (geometry.type === "Polygon") return ringCenter(geometry.coordinates[0]);
   if (geometry.type === "MultiPolygon") {
     const centers = geometry.coordinates.map((polygon) => ringCenter(polygon[0]));
@@ -1276,6 +1280,9 @@ function createServerRenderedParcelLayer(geography) {
     try {
       const feature = await loadParcelAtPoint(event.latlng, request.signal, parcelWhere(geography));
       if (!feature || parcelClickRequest !== request || !map.hasLayer(layer)) return;
+      if (usesParcelPoints(geography)
+        && !(await parcelPointInGeography(feature.properties?.ACCTID, geography, request.signal))) return;
+      if (parcelClickRequest !== request || !map.hasLayer(layer)) return;
       const popup = L.popup({ className: "parcel-tooltip", maxWidth: 280 })
         .setLatLng(event.latlng)
         .setContent(popupMarkup(feature.properties || {}));
@@ -1361,9 +1368,37 @@ function createServerRenderedParcelLayer(geography) {
   return layer;
 }
 
-function buildParcelQuery(geography = selectedGeography) {
+function usesParcelPoints(geography) {
+  return Boolean(geography) && elements.geographyTypeSelect.value === "congressional";
+}
+
+function sqlString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+async function parcelPointInGeography(acctId, geography, signal) {
+  if (!acctId) return false;
   const params = new URLSearchParams({
-    where: parcelWhere(geography),
+    where: `ACCTID = ${sqlString(acctId)}`,
+    outFields: "OBJECTID",
+    returnGeometry: "true",
+    outSR: "4326",
+    f: "geojson",
+  });
+  const response = await fetch(`${PARCEL_POINTS_LAYER_URL}/query?${params}`, { signal });
+  const payload = await response.json();
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error?.message || `Parcel points service returned ${response.status}.`);
+  }
+  return (payload.features || []).some((feature) =>
+    feature.geometry && pointInGeometry(feature.geometry.coordinates, geography.geometry));
+}
+
+function buildParcelQuery(geography = selectedGeography) {
+  const usePoints = usesParcelPoints(geography);
+  const layerUrl = usePoints ? PARCEL_POINTS_LAYER_URL : PARCEL_LAYER_URL;
+  const params = new URLSearchParams({
+    where: usePoints ? `${parcelWhere(geography)} AND ${PARCEL_POINTS_WHERE}` : parcelWhere(geography),
     outFields: PARCEL_OUT_FIELDS,
     returnGeometry: "true",
     outSR: "4326",
@@ -1391,7 +1426,7 @@ function buildParcelQuery(geography = selectedGeography) {
   }
 
   return {
-    url: `${PARCEL_LAYER_URL}/query`,
+    url: `${layerUrl}/query`,
     options: {
       method: "POST",
       body: params,
@@ -1503,7 +1538,59 @@ async function loadGeographyParcelAttributes(geography, objectIds, signal, onPro
   return { type: "FeatureCollection", features };
 }
 
+async function loadParcelFeaturesByPointIdsInView(pointObjectIds, signal) {
+  const extent = getMapExtent();
+  const acctIds = [];
+  for (let start = 0; start < pointObjectIds.length; start += 1000) {
+    const response = await fetch(`${PARCEL_POINTS_LAYER_URL}/query`, {
+      method: "POST",
+      body: new URLSearchParams({
+        objectIds: pointObjectIds.slice(start, start + 1000).join(","),
+        geometry: `${extent.xmin},${extent.ymin},${extent.xmax},${extent.ymax}`,
+        geometryType: "esriGeometryEnvelope",
+        inSR: "4326",
+        spatialRel: "esriSpatialRelIntersects",
+        outFields: "ACCTID",
+        returnGeometry: "false",
+        f: "json",
+      }),
+      signal,
+      headers: { Accept: "application/json" },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error?.message || `Parcel points service returned ${response.status}.`);
+    }
+    (payload.features || []).forEach((feature) => {
+      if (feature.attributes?.ACCTID) acctIds.push(feature.attributes.ACCTID);
+    });
+  }
+
+  const features = [];
+  for (let start = 0; start < acctIds.length; start += 200) {
+    const response = await fetch(`${PARCEL_LAYER_URL}/query`, {
+      method: "POST",
+      body: new URLSearchParams({
+        where: `ACCTID IN (${acctIds.slice(start, start + 200).map(sqlString).join(",")})`,
+        outFields: PARCEL_OUT_FIELDS,
+        returnGeometry: "true",
+        outSR: "4326",
+        f: "geojson",
+      }),
+      signal,
+      headers: { Accept: "application/geo+json, application/json" },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
+      throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
+    }
+    features.push(...(payload.features || []));
+  }
+  return { type: "FeatureCollection", features };
+}
+
 async function loadParcelFeaturesByIdsInView(objectIds, signal) {
+  if (usesParcelPoints(selectedGeography)) return loadParcelFeaturesByPointIdsInView(objectIds, signal);
   const query = buildParcelQuery(null);
   const baseParams = new URL(query.url).searchParams;
   const features = [];
