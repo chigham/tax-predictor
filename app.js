@@ -392,6 +392,8 @@ const elements = {
   acknowledgementsPopover: document.querySelector("#acknowledgements-popover"),
 };
 
+zoomControl.getContainer().append(elements.mapStatus.closest(".map-status"));
+
 let parcelLayer = null;
 let geographyLayer = null;
 let geographyFeatures = [];
