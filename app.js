@@ -3,11 +3,13 @@ const PARCEL_LAYER_URL =
 const PARCEL_MAP_SERVICE_URL = PARCEL_LAYER_URL.replace(/\/0$/, "");
 const STATE_CENTER = [39.2, -76.7];
 const STATE_ZOOM = 8;
+const VECTOR_MIN_ZOOM = 15;
 const MAX_PARCELS_PER_REQUEST = 1000;
 const PARCEL_OUT_FIELDS =
   "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN,DESCBLDG";
 const PARCEL_POINTS_LAYER_URL =
   "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0";
+const PARCEL_POINT_TYPE_FILTER = "PTYPE NOT IN (20, 21)";
 const SFH_BUILDING_TYPES = ["DWEL Standard Unit", "DWEL Split Level", "DWEL Split Foyer"];
 const SFH_WHERE = `LU = 'R' AND SQFTSTRC > 0 AND DESCBLDG IN (${SFH_BUILDING_TYPES.map((type) => `'${type}'`).join(", ")})`;
 const COUNTY_TAX_RATES = {
@@ -1090,7 +1092,8 @@ function geographyAttributeFilter(geography) {
 
 function parcelWhere(geography) {
   const attributeFilter = geographyAttributeFilter(geography);
-  return attributeFilter ? `${TAX_CONFIG.where} AND ${attributeFilter}` : TAX_CONFIG.where;
+  const geographyWhere = attributeFilter ? `${TAX_CONFIG.where} AND ${attributeFilter}` : TAX_CONFIG.where;
+  return `${geographyWhere} AND ${PARCEL_POINT_TYPE_FILTER}`;
 }
 
 function geographyGeometryForQuery(geography = selectedGeography) {
@@ -1205,7 +1208,7 @@ async function loadAnalysisPoints(geography, spatialFilter, signal) {
 
 async function loadShapes(geography, spatialFilter, signal) {
   return queryAllGeojson(PARCEL_LAYER_URL, {
-    where: geographyAttributeFilter(geography) || "1=1",
+    where: parcelWhere(geography),
     ...spatialFilter,
     outFields: "OBJECTID",
     returnGeometry: "true",
