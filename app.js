@@ -9,7 +9,9 @@ const PARCEL_OUT_FIELDS =
   "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN,DESCBLDG";
 const PARCEL_POINTS_LAYER_URL =
   "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0";
-const PARCEL_POINT_TYPE_FILTER = "PTYPE NOT IN (20, 21)";
+// Shapes carry only one account's attributes, so they are not filtered by value, exemption, or town.
+// A shape renders when at least one qualifying account point falls inside it.
+const PARCEL_SHAPE_WHERE = "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE')";
 const SFH_BUILDING_TYPES = ["DWEL Standard Unit", "DWEL Split Level", "DWEL Split Foyer"];
 const SFH_WHERE = `LU = 'R' AND SQFTSTRC > 0 AND DESCBLDG IN (${SFH_BUILDING_TYPES.map((type) => `'${type}'`).join(", ")})`;
 const COUNTY_TAX_RATES = {
@@ -1108,8 +1110,7 @@ function geographyAttributeFilter(geography) {
 
 function parcelWhere(geography) {
   const attributeFilter = geographyAttributeFilter(geography);
-  const geographyWhere = attributeFilter ? `${TAX_CONFIG.where} AND ${attributeFilter}` : TAX_CONFIG.where;
-  return `${geographyWhere} AND ${PARCEL_POINT_TYPE_FILTER}`;
+  return attributeFilter ? `${TAX_CONFIG.where} AND ${attributeFilter}` : TAX_CONFIG.where;
 }
 
 function geographyGeometryForQuery(geography = selectedGeography) {
@@ -1222,9 +1223,9 @@ async function loadAnalysisPoints(geography, spatialFilter, signal) {
   return pointFeatures.filter((feature) => contains(feature.geometry.coordinates));
 }
 
-async function loadShapes(geography, spatialFilter, signal) {
+async function loadShapes(spatialFilter, signal) {
   return queryAllGeojson(PARCEL_LAYER_URL, {
-    where: parcelWhere(geography),
+    where: PARCEL_SHAPE_WHERE,
     ...spatialFilter,
     outFields: "OBJECTID",
     returnGeometry: "true",
@@ -1240,7 +1241,7 @@ async function loadAccountsAtPoint(latlng, geography, signal) {
     inSR: "4326",
     spatialRel: "esriSpatialRelIntersects",
   };
-  const shapes = await loadShapes(geography, clickFilter, signal);
+  const shapes = await loadShapes(clickFilter, signal);
   const shape = shapes
     .filter((feature) => feature.geometry)
     .sort((a, b) => geometryArea(a.geometry) - geometryArea(b.geometry))[0];
@@ -1360,7 +1361,7 @@ function createParcelMapLayer(geography) {
   const showVectors = async (signal) => {
     const view = viewEnvelopeFilter();
     const [shapes, points] = await Promise.all([
-      loadShapes(geography, view, signal),
+      loadShapes(view, signal),
       loadAnalysisPoints(geography, view, signal),
     ]);
     if (signal.aborted || !map.hasLayer(layer)) return;
