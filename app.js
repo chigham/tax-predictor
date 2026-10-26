@@ -14,6 +14,110 @@ const PARCEL_POINTS_LAYER_URL =
 const PARCEL_SHAPE_WHERE = "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE')";
 const SFH_BUILDING_TYPES = ["DWEL Standard Unit", "DWEL Split Level", "DWEL Split Foyer"];
 const SFH_WHERE = `LU = 'R' AND SQFTSTRC > 0 AND DESCBLDG IN (${SFH_BUILDING_TYPES.map((type) => `'${type}'`).join(", ")})`;
+const TOWNHOUSE_BUILDING_TYPES = ["DWEL Center Unit", "DWEL End Unit"];
+const AGRICULTURAL_LAND_USES = ["A", "MA"];
+const COMMERCIAL_LAND_USES = ["C", "CC", "CA", "EC"];
+const INDUSTRIAL_LAND_USES = ["I"];
+const MIXED_USE_LAND_USES = ["CR", "RC"];
+const COMMERCIAL_RELATED_LAND_USES = [
+  ...COMMERCIAL_LAND_USES,
+  ...INDUSTRIAL_LAND_USES,
+  ...MIXED_USE_LAND_USES,
+];
+const sqlList = (values) => values.map((value) => `'${value}'`).join(", ");
+const NOT_AGRICULTURAL_WHERE = `(LU IS NULL OR LU NOT IN (${sqlList(AGRICULTURAL_LAND_USES)}))`;
+const IMPROVED_WHERE = `${NOT_AGRICULTURAL_WHERE} AND NFMIMPVL > 0`;
+// Report property types. Each account belongs to exactly one type: the first whose rule matches.
+// `where` (server statistics) and `matches` (parcel CSV) must describe the same rule.
+const PROPERTY_TYPES = [
+  {
+    key: "agricultural",
+    label: "Agricultural",
+    definition: "Land use Agricultural or Marsh Land, with or without buildings.",
+    where: `LU IN (${sqlList(AGRICULTURAL_LAND_USES)})`,
+    matches: ({ lu }) => AGRICULTURAL_LAND_USES.includes(lu),
+  },
+  {
+    key: "vacant",
+    label: "Vacant / unimproved land",
+    definition: "Any other land use with no assessed improvement value (blank or $0).",
+    where: `${NOT_AGRICULTURAL_WHERE} AND (NFMIMPVL IS NULL OR NFMIMPVL = 0)`,
+    matches: ({ improved }) => !improved,
+  },
+  {
+    key: "sfh",
+    label: "Single-family homes",
+    definition: `Improved residential accounts that meet the SFH benchmark rule: structure square footage > 0 and building type ${SFH_BUILDING_TYPES.join(", ")}.`,
+    where: `${IMPROVED_WHERE} AND ${SFH_WHERE}`,
+    matches: ({ properties }) => isSingleFamilyParcel(properties),
+  },
+  {
+    key: "townhouse",
+    label: "Townhouses / rowhouses",
+    definition: `Improved accounts with land use Town House, or residential with building type ${TOWNHOUSE_BUILDING_TYPES.join(", ")}.`,
+    where: `${IMPROVED_WHERE} AND (LU = 'TH' OR (LU = 'R' AND DESCBLDG IN (${sqlList(TOWNHOUSE_BUILDING_TYPES)})))`,
+    matches: ({ lu, properties }) => lu === "TH" || (lu === "R" && TOWNHOUSE_BUILDING_TYPES.includes(properties.DESCBLDG)),
+  },
+  {
+    key: "condo",
+    label: "Condominiums",
+    definition: "Improved accounts with land use Residential Condominium (each unit is its own account).",
+    where: `${IMPROVED_WHERE} AND LU = 'U'`,
+    matches: ({ lu }) => lu === "U",
+  },
+  {
+    key: "otherResidential",
+    label: "Other residential",
+    definition: "Remaining improved residential accounts, such as mobile homes, rental dwellings, and accounts with no building type.",
+    where: `${IMPROVED_WHERE} AND LU = 'R' AND (DESCBLDG IS NULL OR DESCBLDG NOT IN (${sqlList([...SFH_BUILDING_TYPES, ...TOWNHOUSE_BUILDING_TYPES])}) OR (DESCBLDG IN (${sqlList(SFH_BUILDING_TYPES)}) AND (SQFTSTRC IS NULL OR SQFTSTRC <= 0)))`,
+    matches: ({ lu }) => lu === "R",
+  },
+  {
+    key: "apartments",
+    label: "Apartments",
+    definition: "Improved accounts with land use Apartments.",
+    where: `${IMPROVED_WHERE} AND LU = 'M'`,
+    matches: ({ lu }) => lu === "M",
+  },
+  {
+    key: "commercial",
+    label: "Commercial",
+    definition: "Improved accounts with land use Commercial, Commercial Condominium, Country Club, or Exempt Commercial.",
+    where: `${IMPROVED_WHERE} AND LU IN (${sqlList(COMMERCIAL_LAND_USES)})`,
+    matches: ({ lu }) => COMMERCIAL_LAND_USES.includes(lu),
+  },
+  {
+    key: "mixedUse",
+    label: "Mixed use",
+    definition: "Improved accounts with land use Commercial/Residential or Residential/Commercial.",
+    where: `${IMPROVED_WHERE} AND LU IN (${sqlList(MIXED_USE_LAND_USES)})`,
+    matches: ({ lu }) => MIXED_USE_LAND_USES.includes(lu),
+  },
+  {
+    key: "industrial",
+    label: "Industrial",
+    definition: "Improved accounts with land use Industrial.",
+    where: `${IMPROVED_WHERE} AND LU IN (${sqlList(INDUSTRIAL_LAND_USES)})`,
+    matches: ({ lu }) => INDUSTRIAL_LAND_USES.includes(lu),
+  },
+  {
+    key: "other",
+    label: "Other",
+    definition: "Remaining improved accounts, mostly land use Exempt without an exemption class.",
+    where: `${IMPROVED_WHERE} AND (LU IS NULL OR LU NOT IN (${sqlList(["R", "TH", "U", "M", ...COMMERCIAL_RELATED_LAND_USES])}))`,
+    matches: () => true,
+  },
+];
+const OCCUPANCY_GROUPS = [
+  { key: "H", label: "Owner-occupied (code H)" },
+  { key: "N", label: "Not owner-occupied (code N)" },
+  { key: "D", label: "Other occupancy code (D)" },
+  { key: "", label: "Not reported" },
+];
+// Land-share distributions are requested as counts at 5-point bands (0%, 5%, … 95%, below 100%).
+const LAND_SHARE_BANDS = 20;
+// Bills that change by less than this fraction either way count as "about the same".
+const ABOUT_THE_SAME_THRESHOLD = 0.01;
 const COUNTY_TAX_RATES = {
   "Allegany County": {"base": 0.00975, "municipalities":{"Barton": 0.009133, "Cumberland": 0.008195, "Frostburg": 0.00861, "Lonaconing": 0.008756, "Luke": 0.008752, "Midland": 0.009133, "Westernport": 0.009133}},  // varies by municipality
   "Anne Arundel County": {"base": 0.00968, "municipalities":{"Annapolis": 0.00577, "Highland Beach": 0.00938}},  // varies by municipality
@@ -630,10 +734,9 @@ function compareCountyDistricts(a, b) {
   return districtA.localeCompare(districtB);
 }
 
-async function loadCountyCouncilChoices(signal) {
-  const config = GEOGRAPHY_CONFIG.countyCouncil;
+async function loadCountyCouncilChoices(signal, sources = GEOGRAPHY_CONFIG.countyCouncil.sources) {
   const responses = await Promise.all(
-    config.sources.map(async (source) => {
+    sources.map(async (source) => {
       try {
         if (source.format === "shapefile") {
           if (typeof shp !== "function") throw new Error("The shapefile parser did not load.");
@@ -1569,7 +1672,11 @@ async function loadSfhBenchmarks(geography, signal) {
   };
 }
 
-function parcelGroupedStatisticsRequest(geography, statistics) {
+function parcelGroupedStatisticsRequest(
+  geography,
+  statistics,
+  { where = null, groupBy = "JURSCODE,TOWNCODE,DESCTOWN" } = {},
+) {
   const query = buildParcelQuery(geography);
   const params = query.options.body
     ? new URLSearchParams(query.options.body)
@@ -1578,8 +1685,9 @@ function parcelGroupedStatisticsRequest(geography, statistics) {
   params.delete("outSR");
   params.delete("resultRecordCount");
   params.set("returnGeometry", "false");
-  params.set("outFields", "JURSCODE,TOWNCODE,DESCTOWN");
-  params.set("groupByFieldsForStatistics", "JURSCODE,TOWNCODE,DESCTOWN");
+  if (where) params.set("where", `${params.get("where")} AND (${where})`);
+  params.set("outFields", groupBy);
+  params.set("groupByFieldsForStatistics", groupBy);
   params.set("outStatistics", JSON.stringify(statistics));
   params.set("f", "json");
   if (query.options.body) return { url: query.url, options: { method: "POST", body: params } };
@@ -1825,151 +1933,527 @@ function downloadBaseName(suffix) {
   return `parcelanalysismd-${geography || "selected-area"}-${suffix}`;
 }
 
-// Exports still use a single rate set: the "all counties" scenario rates. TODO: fix this
-function currentScenarioRates() {
-  const rates = taxScenarioModel?.rates.all.all;
-  const landRate = parseRatePercent(rates?.land);
-  const improvementRate = parseRatePercent(rates?.improvement);
+function scenarioSnapshot() {
+  const model = taxScenarioModel;
+  if (!model) return null;
+  const state = { scope: model.scope, rates: structuredClone(model.rates) };
+  const unitPairs = revenueNeutralUnits(model);
+  const units = unitPairs.map(([key, unit]) => {
+    const entry = state.rates[state.scope][key];
+    const jurisdictions = unit.counties
+      ? unit.counties.flatMap((county) => county.jurisdictions)
+      : unit.jurisdictions || [unit];
+    const restOfCounty = state.scope === "jurisdiction" && !unit.municipality
+      && unitPairs.some(([, other]) => other.municipality && other.county === unit.county);
+    return {
+      label: state.scope === "all" ? "All counties" : `${key}${restOfCounty ? ` (${REST_OF_COUNTY_LABEL.toLowerCase()})` : ""}`,
+      currentRates: [...new Set(jurisdictions.map((details) => details.rate))].sort((a, b) => a - b),
+      land: parseRatePercent(entry?.land),
+      improvement: parseRatePercent(entry?.improvement),
+    };
+  });
   return {
-    landRate: Number.isFinite(landRate) ? landRate : 0.01,
-    improvementRate: Number.isFinite(improvementRate) ? improvementRate : 0.01,
+    model,
+    scopeLabel: taxScenarioScopeLabel(state.scope, model),
+    units,
+    missing: units
+      .filter((unit) => !Number.isFinite(unit.land) || !Number.isFinite(unit.improvement))
+      .map((unit) => unit.label),
+    ratesFor: (details) => scenarioRatesFor(details, state),
   };
 }
 
-async function summaryScenarioForDownload(signal) {
-  const rates = currentScenarioRates();
+function propertyTypeFor(properties) {
+  const facts = {
+    properties,
+    lu: String(properties.LU || "").trim().toUpperCase(),
+    improved: properties.NFMIMPVL !== null && properties.NFMIMPVL !== undefined && Number(properties.NFMIMPVL) > 0,
+  };
+  return PROPERTY_TYPES.find((type) => type.matches(facts));
+}
 
-  setStatus("Calculating the default split-rate scenario for export…", "loading");
-  const [landValue, improvementValue, breakdown] = await Promise.all([
-    loadParcelValueTotal(selectedGeography, "NFMLNDVL", signal),
-    loadParcelValueTotal(selectedGeography, "NFMIMPVL", signal),
-    loadGroupedHypotheticalTax(selectedGeography, rates.landRate, rates.improvementRate, signal),
+function occupancyGroupFor(value) {
+  const code = String(value || "").trim().toUpperCase();
+  return OCCUPANCY_GROUPS.find((group) => group.key === code) || OCCUPANCY_GROUPS.at(-1);
+}
+
+function landShareStatistics() {
+  const statistics = ["NFMTTLVL", "NFMLNDVL", "NFMIMPVL"].flatMap((field) => [
+    { statisticType: "avg", onStatisticField: field, outStatisticFieldName: `avg_${field}` },
+    { statisticType: "count", onStatisticField: field, outStatisticFieldName: `count_${field}` },
   ]);
-  const revenue = rates.landRate * landValue + rates.improvementRate * improvementValue;
+  for (let band = 0; band < LAND_SHARE_BANDS; band += 1) {
+    const condition = band === 0
+      ? "NFMLNDVL = 0"
+      : `NFMLNDVL <= NFMTTLVL * ${(band / LAND_SHARE_BANDS).toFixed(4)}`;
+    statistics.push({
+      statisticType: "sum",
+      onStatisticField: `CASE WHEN NFMLNDVL IS NULL OR ${condition} THEN 1 ELSE 0 END`,
+      outStatisticFieldName: `landShareAtMost${band}`,
+    });
+  }
+  statistics.push({
+    statisticType: "sum",
+    onStatisticField: "CASE WHEN NFMLNDVL IS NULL OR NFMLNDVL < NFMTTLVL THEN 1 ELSE 0 END",
+    outStatisticFieldName: "landShareBelowOne",
+  });
+  return statistics;
+}
 
+function breakdownCell(propertyType, attributes) {
+  const count = Number(attributes.count_NFMTTLVL) || 0;
+  const valueTotal = (field) => {
+    const value = Number(attributes[`avg_${field}`]) * Number(attributes[`count_${field}`]);
+    return Number.isFinite(value) ? value : 0;
+  };
+  const share = (value) => (count ? (Number(value) || 0) / count : 0);
   return {
-    rates,
-    summary: {
-      revenue,
-      byCounty: breakdown.byCounty,
-      byJurisdiction: breakdown.byJurisdiction,
-    },
+    propertyType: propertyType.key,
+    occupancy: occupancyGroupFor(attributes.OOI).key,
+    details: taxJurisdictionDetails(attributes),
+    count,
+    totalValue: valueTotal("NFMTTLVL"),
+    landValue: valueTotal("NFMLNDVL"),
+    improvementValue: valueTotal("NFMIMPVL"),
+    landShareAtMost: Array.from({ length: LAND_SHARE_BANDS }, (_, band) => share(attributes[`landShareAtMost${band}`])),
+    landShareBelowOne: share(attributes.landShareBelowOne),
   };
 }
 
-async function summaryMarkdown(signal) {
+// One cell per property type × tax jurisdiction × occupancy code.
+async function loadTaxBreakdownCells(geography, signal) {
+  const statistics = landShareStatistics();
+  const message = "Calculating who pays more and who pays less…";
+  let completed = 0;
+  showParcelLoadProgress(message, completed, PROPERTY_TYPES.length);
+  const groups = await Promise.all(PROPERTY_TYPES.map(async (propertyType) => {
+    const query = parcelGroupedStatisticsRequest(geography, statistics, {
+      where: propertyType.where,
+      groupBy: "JURSCODE,TOWNCODE,DESCTOWN,OOI",
+    });
+    const response = await fetch(query.url, { ...query.options, signal, headers: { Accept: "application/json" } });
+    const payload = await response.json();
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
+    }
+    completed += 1;
+    showParcelLoadProgress(message, completed, PROPERTY_TYPES.length);
+    return (payload.features || []).map(({ attributes = {} }) => breakdownCell(propertyType, attributes));
+  }));
+  return groups.flat().filter((cell) => cell.count > 0);
+}
+
+// Within a tax jurisdiction, a bill's fractional change is base + slope × land share.
+function cellScenario(cell, ratesFor) {
+  const rates = ratesFor(cell.details);
+  const currentRate = cell.details.rate;
+  if (!rates || !Number.isFinite(currentRate) || currentRate <= 0) return null;
+  return {
+    currentTax: cell.totalValue * currentRate,
+    hypotheticalTax: cell.landValue * rates.land + cell.improvementValue * rates.improvement,
+    base: rates.improvement / currentRate - 1,
+    slope: (rates.land - rates.improvement) / currentRate,
+  };
+}
+
+// Share of a cell's accounts with land share ≤ x, interpolated linearly within each band.
+function landShareAtMost(cell, x) {
+  if (x < 0) return 0;
+  if (x >= 1) return 1;
+  const position = x * LAND_SHARE_BANDS;
+  const band = Math.floor(position);
+  const lower = cell.landShareAtMost[band];
+  const upper = band + 1 < LAND_SHARE_BANDS ? cell.landShareAtMost[band + 1] : cell.landShareBelowOne;
+  return lower + (upper - lower) * (position - band);
+}
+
+// Share with land share < x. Differs from landShareAtMost only at the 0% and 100% atoms.
+function landShareBelow(cell, x) {
+  if (x <= 0) return 0;
+  if (x === 1) return cell.landShareBelowOne;
+  return landShareAtMost(cell, x);
+}
+
+function changeShareAtMost(cell, change) {
+  const { base, slope } = cell.scenario;
+  if (Math.abs(slope) < 1e-9) return change >= base ? 1 : 0;
+  const x = (change - base) / slope;
+  return slope > 0 ? landShareAtMost(cell, x) : 1 - landShareBelow(cell, x);
+}
+
+function changeShareBelow(cell, change) {
+  const { base, slope } = cell.scenario;
+  if (Math.abs(slope) < 1e-9) return change > base ? 1 : 0;
+  const x = (change - base) / slope;
+  return slope > 0 ? landShareBelow(cell, x) : 1 - landShareAtMost(cell, x);
+}
+
+function medianChange(cells, count) {
+  const shareAtMost = (change) =>
+    cells.reduce((total, cell) => total + cell.count * changeShareAtMost(cell, change), 0) / count;
+  let low = Math.min(...cells.map(({ scenario }) => Math.min(scenario.base, scenario.base + scenario.slope)));
+  let high = Math.max(...cells.map(({ scenario }) => Math.max(scenario.base, scenario.base + scenario.slope)));
+  if (shareAtMost(low) >= 0.5) return low;
+  for (let step = 0; step < 50; step += 1) {
+    const middle = (low + high) / 2;
+    if (shareAtMost(middle) >= 0.5) high = middle;
+    else low = middle;
+  }
+  return high;
+}
+
+function summarizeCells(cells) {
+  const priced = cells.filter((cell) => cell.scenario);
+  const count = priced.reduce((total, cell) => total + cell.count, 0);
+  if (!count) return null;
+  const sum = (read) => priced.reduce((total, cell) => total + read(cell), 0);
+  const currentTax = sum((cell) => cell.scenario.currentTax);
+  const hypotheticalTax = sum((cell) => cell.scenario.hypotheticalTax);
+  const payingLess = sum((cell) => cell.count * changeShareBelow(cell, -ABOUT_THE_SAME_THRESHOLD)) / count;
+  const payingMore = sum((cell) => cell.count * (1 - changeShareAtMost(cell, ABOUT_THE_SAME_THRESHOLD))) / count;
+  return {
+    count,
+    currentTax,
+    hypotheticalTax,
+    change: hypotheticalTax - currentTax,
+    payingLess,
+    payingMore,
+    aboutTheSame: Math.max(0, 1 - payingLess - payingMore),
+    medianChange: medianChange(priced, count),
+    averageChange: (hypotheticalTax - currentTax) / count,
+  };
+}
+
+const NOT_AVAILABLE_TEXT = "n/a";
+
+function formatTextCurrency(value) {
+  return Number.isFinite(value) ? formatCurrency(value) : NOT_AVAILABLE_TEXT;
+}
+
+function formatSignedCurrency(value) {
+  return Number.isFinite(value)
+    ? new Intl.NumberFormat("en-US", {
+      style: "currency", currency: "USD", maximumFractionDigits: 0, signDisplay: "exceptZero",
+    }).format(Math.round(value))
+    : NOT_AVAILABLE_TEXT;
+}
+
+function formatShare(fraction) {
+  return Number.isFinite(fraction) ? formatPercent(fraction * 100) : NOT_AVAILABLE_TEXT;
+}
+
+function formatSignedShare(fraction) {
+  return Number.isFinite(fraction)
+    ? `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, signDisplay: "exceptZero" }).format(fraction * 100)}%`
+    : NOT_AVAILABLE_TEXT;
+}
+
+function formatRatePercentText(rate) {
+  return Number.isFinite(rate) ? `${formatRateInput(rate)}%` : "not entered";
+}
+
+function formatCountText(value) {
+  return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : NOT_AVAILABLE_TEXT;
+}
+
+// Plain-text table: first column left-aligned, the rest right-aligned.
+function textTable(headers, rows) {
+  const widths = headers.map((header, column) =>
+    Math.max(header.length, ...rows.map((row) => String(row[column]).length)));
+  const line = (cells) => cells
+    .map((cell, column) => (column === 0 ? String(cell).padEnd(widths[column]) : String(cell).padStart(widths[column])))
+    .join("   ")
+    .trimEnd();
+  return [line(headers), line(widths.map((width) => "-".repeat(width))), ...rows.map(line)];
+}
+
+function breakdownTables(groups, all) {
+  const rows = [...groups.filter((group) => group.summary), { label: "All parcels", summary: all }];
+  const totals = textTable(
+    ["Group", "Parcels", "Current tax", "Hypothetical tax", "Change", "Change %", "Share now", "Share after"],
+    rows.map(({ label, summary }) => [
+      label,
+      formatCountText(summary.count),
+      formatTextCurrency(summary.currentTax),
+      formatTextCurrency(summary.hypotheticalTax),
+      formatSignedCurrency(summary.change),
+      formatSignedShare(summary.currentTax ? summary.change / summary.currentTax : Number.NaN),
+      formatShare(summary.currentTax / all.currentTax),
+      formatShare(summary.hypotheticalTax / all.hypotheticalTax),
+    ]),
+  );
+  const distribution = textTable(
+    ["Group", "Pay less", "About the same", "Pay more", "Median change", "Avg change per parcel"],
+    rows.map(({ label, summary }) => [
+      label,
+      formatShare(summary.payingLess),
+      formatShare(summary.aboutTheSame),
+      formatShare(summary.payingMore),
+      formatSignedShare(summary.medianChange),
+      formatSignedCurrency(summary.averageChange),
+    ]),
+  );
+  return ["", ...totals, "", ...distribution];
+}
+
+function placeGroups(cells, model) {
+  return model.counties.flatMap((county) => {
+    const countyCells = cells.filter((cell) => cell.details.county === county.name);
+    const countyGroup = { label: county.name, summary: summarizeCells(countyCells) };
+    if (!county.municipalities.length) return [countyGroup];
+    return [
+      countyGroup,
+      ...county.jurisdictions.map((details) => ({
+        label: `  ${details.municipality || REST_OF_COUNTY_LABEL}`,
+        summary: summarizeCells(countyCells.filter((cell) => cell.details.jurisdiction === details.jurisdiction)),
+      })),
+    ];
+  });
+}
+
+async function summaryText(signal) {
   const summary = latestTaxSummary || {};
-  const scenario = await summaryScenarioForDownload(signal);
-  const rates = scenario.rates;
-  const scenarioSummary = scenario.summary;
-  const now = new Date().toISOString();
+  const scenario = scenarioSnapshot();
+  const scenarioComplete = Boolean(scenario && !scenario.missing.length);
+  let cells = [];
+  if (scenarioComplete) {
+    cells = (await loadTaxBreakdownCells(selectedGeography, signal)).map((cell) => ({
+      ...cell,
+      scenario: cellScenario(cell, scenario.ratesFor),
+    }));
+  }
+  const all = summarizeCells(cells);
+  const unpricedCount = cells.filter((cell) => !cell.scenario).reduce((total, cell) => total + cell.count, 0);
+
   const lines = [];
+  const heading = (title) => lines.push("", "", title.toUpperCase(), "=".repeat(title.length));
+  const subheading = (title) => lines.push("", title, "-".repeat(title.length));
+  const field = (label, value) => lines.push(`${`${label}:`.padEnd(36)}${value}`);
 
-  lines.push(`# Parcel Analysis MD — Summary`);
-  lines.push(`Generated: ${now}`);
-  lines.push(``);
-  lines.push(`**Geography:** ${formatGeographyName()}`);
-  lines.push(`**Analysis:** ${TAX_CONFIG.title}`);
-  lines.push(``);
-  lines.push(`## Key metrics`);
-  const add = (label, value) => lines.push(`- **${label}:** ${value}`);
-  add("Parcels loaded", elements.parcelCount.textContent || "—");
-  add("Total land value", summary.landValue === null ? "—" : formatCompactCurrency(summary.landValue));
-  add("Total overall value", summary.totalValue === null ? "—" : formatCompactCurrency(summary.totalValue));
-  add("Land / total", summary.landValueRatio === null ? "—" : formatPercent(summary.landValueRatio));
-  add("Qualifying SFH parcel count", summary.sfhCount == null ? "—" : summary.sfhCount.toLocaleString());
-  add("Mean SFH land / total", summary.meanSfhLandRatio == null ? "—" : formatPercent(summary.meanSfhLandRatio * 100));
-  add("Median SFH land / total", summary.medianSfhLandRatio == null ? "—" : formatPercent(summary.medianSfhLandRatio * 100));
-  add("Total current tax", summary.currentTaxRevenue == null ? "—" : formatCompactCurrency(summary.currentTaxRevenue));
-  add("Split land rate percent", `${(rates.landRate * 100).toFixed(4)}%`);
-  add("Split improvement rate percent", `${(rates.improvementRate * 100).toFixed(4)}%`);
-  add("Hypothetical split-rate tax", scenarioSummary.revenue == null ? "—" : formatCompactCurrency(scenarioSummary.revenue));
-  lines.push(``);
+  lines.push("PARCEL ANALYSIS MD - SPLIT-RATE PROPERTY TAX SUMMARY", "");
+  field("Geography", formatGeographyName());
+  field("Geography type", summary.geographyTypeLabel || NOT_AVAILABLE_TEXT);
+  field("Parcel data loaded", summary.loadedAt || NOT_AVAILABLE_TEXT);
+  field("Report generated", new Date().toISOString());
+  lines.push("", "County real property tax only. Read CAVEATS before citing these figures.");
 
-  // County breakdown
-  lines.push(`## Hypothetical tax by county`);
-  lines.push(`| County | Hypothetical tax |`);
-  lines.push(`|---|---:|`);
-  if (scenarioSummary.byCounty && typeof scenarioSummary.byCounty[Symbol.iterator] === 'function') {
-    for (const [county, value] of scenarioSummary.byCounty) {
-      lines.push(`| ${escapeHtml(county)} | ${formatCompactCurrency(value)} |`);
+  heading("Scenario settings");
+  if (!scenario) {
+    lines.push("No split-rate scenario is available for this selection.");
+  } else {
+    field("Rate settings", scenario.scopeLabel);
+    lines.push("", ...textTable(
+      ["Applies to", "Current rate", "Land rate", "Improvement rate", "Land : improvement"],
+      scenario.units.map((unit) => [
+        unit.label,
+        unit.currentRates.length === 1
+          ? formatRatePercentText(unit.currentRates[0])
+          : `${formatRatePercentText(unit.currentRates[0])} to ${formatRatePercentText(unit.currentRates.at(-1))}`,
+        formatRatePercentText(unit.land),
+        formatRatePercentText(unit.improvement),
+        !Number.isFinite(unit.land) || !Number.isFinite(unit.improvement) ? NOT_AVAILABLE_TEXT
+          : unit.improvement > 0 ? `${Number((unit.land / unit.improvement).toFixed(2))} : 1`
+            : unit.land > 0 ? "land only" : NOT_AVAILABLE_TEXT,
+      ]),
+    ));
+    lines.push("", "Rates are percent of assessed value ($ per $100). Current rate is the county rate, or the rate applied inside a municipality where it differs.");
+    if (scenario.missing.length) {
+      lines.push("", `Hypothetical results are omitted because land and improvement rates have not been entered for: ${scenario.missing.join("; ")}.`);
+    }
+  }
+
+  heading("Headline");
+  if (all) {
+    field("Current county property tax", formatTextCurrency(all.currentTax));
+    field("Hypothetical split-rate tax", formatTextCurrency(all.hypotheticalTax));
+    field("Change", `${formatSignedCurrency(all.change)} (${formatSignedShare(all.change / all.currentTax)})`);
+    field("Parcels paying less", `${formatShare(all.payingLess)} (about ${formatCountText(all.payingLess * all.count)})`);
+    field("Parcels paying about the same", `${formatShare(all.aboutTheSame)} (about ${formatCountText(all.aboutTheSame * all.count)})`);
+    field("Parcels paying more", `${formatShare(all.payingMore)} (about ${formatCountText(all.payingMore * all.count)})`);
+    const homes = summarizeCells(cells.filter((cell) => cell.propertyType === "sfh" && cell.occupancy === "H"));
+    if (homes) {
+      lines.push("", `Owner-occupied single-family homes (${formatCountText(homes.count)}): median bill change ${formatSignedShare(homes.medianChange)}, average change ${formatSignedCurrency(homes.averageChange)} per home, ${formatShare(homes.payingLess)} pay less.`);
+    }
+    if (unpricedCount) {
+      lines.push("", `${formatCountText(unpricedCount)} accounts without a known county tax rate are excluded from the hypothetical results.`);
     }
   } else {
-    lines.push(`| Not available | — |`);
+    field("Current county property tax", formatTextCurrency(summary.currentTaxRevenue));
+    lines.push("", "Hypothetical results are not available for these scenario settings.");
   }
-  lines.push(``);
 
-  // Jurisdiction breakdown
-  lines.push(`## Hypothetical tax by jurisdiction`);
-  lines.push(`| Jurisdiction | Parcel count | Total assessed | Hypothetical tax |`);
-  lines.push(`|---|---:|---:|---:|`);
-  if (scenarioSummary.byJurisdiction && typeof scenarioSummary.byJurisdiction[Symbol.iterator] === 'function') {
-    for (const [jurisdiction, details] of scenarioSummary.byJurisdiction) {
-      const count = details.parcelCount ?? details.parcelCount === 0 ? details.parcelCount : "—";
-      const totalAssessed = details.totalValue ?? (details.landValue ? (details.landValue + (details.improvementValue || 0)) : null);
-      const hypo = details.hypotheticalTax ?? details.hypotheticalTax === 0 ? details.hypotheticalTax : null;
-      lines.push(`| ${escapeHtml(jurisdiction)} | ${count} | ${totalAssessed ? formatCompactCurrency(totalAssessed) : "—"} | ${hypo != null ? formatCompactCurrency(hypo) : "—"} |`);
+  heading("Key metrics");
+  field("Taxable accounts", formatCountText(summary.parcelCount));
+  field("Total land value", formatTextCurrency(summary.landValue));
+  field("Total assessed value", formatTextCurrency(summary.totalValue));
+  field("Land share of assessed value", Number.isFinite(summary.landValueRatio) ? formatPercent(summary.landValueRatio) : NOT_AVAILABLE_TEXT);
+  field("Qualifying single-family homes", formatCountText(summary.sfhCount));
+  field("Mean SFH land share", formatShare(summary.meanSfhLandRatio));
+  field("Median SFH land share", formatShare(summary.medianSfhLandRatio));
+
+  if (all) {
+    heading("Who pays more and who pays less");
+    lines.push("Change = hypothetical split-rate bill minus current bill. Pay less / more and median change are estimates (see DEFINITIONS).");
+    subheading("By property type");
+    lines.push(...breakdownTables(PROPERTY_TYPES.map((type) => ({
+      label: type.label,
+      summary: summarizeCells(cells.filter((cell) => cell.propertyType === type.key)),
+    })), all));
+    subheading("By owner occupancy");
+    lines.push(...breakdownTables(OCCUPANCY_GROUPS.map((group) => ({
+      label: group.label,
+      summary: summarizeCells(cells.filter((cell) => cell.occupancy === group.key)),
+    })), all));
+    subheading("By place (tax jurisdiction)");
+    lines.push(...breakdownTables(placeGroups(cells, scenario.model), all));
+  }
+
+  heading("Caveats");
+  [
+    "Covers county real property tax only. State, municipal, and special district taxes are not included.",
+    "Includes taxable accounts only: assessed value above $0 and no exemption class.",
+    "Bills are assessed value x rate. Homestead Tax Credit caps, Homeowners' Tax Credits, assessment phase-ins, and other credits are not modeled, so actual bills (especially for long-held owner-occupied homes) can be lower, and the change for those owners can differ.",
+    "County and municipal rates are the rates configured in this tool. Check them against current published rates before citing results.",
+    "Pay less / about the same / pay more shares and median changes are estimated from parcel counts in 5-point land-share bands. Tax totals, changes, shares of tax, and averages are exact sums.",
+  ].forEach((text) => lines.push(`- ${text}`));
+
+  heading("Definitions");
+  [
+    "Current bill: assessed value x current rate.",
+    "Hypothetical bill: land value x land rate + improvement value x improvement rate, using the rates for the account's tax jurisdiction.",
+    "Change / Change %: hypothetical minus current tax, in dollars and as a percent of current tax.",
+    "Share now / Share after: the group's share of all current / hypothetical tax in the selection.",
+    `Pay less / Pay more: the bill falls / rises by more than ${formatPercent(ABOUT_THE_SAME_THRESHOLD * 100)}. About the same: within ${formatPercent(ABOUT_THE_SAME_THRESHOLD * 100)} either way.`,
+    "Median change: the middle percent change in bills among the group's accounts.",
+    "Avg change per parcel: total change divided by the number of accounts.",
+    "Land share: land value / total assessed value. Within a tax jurisdiction, a bill's percent change depends only on its land share, so shares and medians are estimated from counts of accounts at each 5-point land-share step (0%, 5%, ..., 95%, 100%), interpolated within each step.",
+    "Owner occupancy: SDAT owner-occupancy code. H = owner-occupied principal residence; N = not owner-occupied; D is reported separately because its meaning is not documented here; Not reported = blank.",
+    "Qualifying single-family homes: accounts used for the SFH benchmarks (residential land use, structure square footage > 0, single-family building types). Mean / Median SFH land share use these accounts.",
+    "Property types (each account counts in the first type it matches, in this order):",
+  ].forEach((text) => lines.push(`- ${text}`));
+  PROPERTY_TYPES.forEach((type) => lines.push(`    ${type.label}: ${type.definition}`));
+
+  heading("Source");
+  lines.push(`Maryland iMAP parcel points (one per tax account): ${PARCEL_POINTS_LAYER_URL}`);
+  lines.push(`Base filter: ${TAX_CONFIG.where}`);
+
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+async function loadParcelDistricts(counties, signal) {
+  const loadDistricts = async (type) => {
+    const response = await fetch(geographyQueryUrl(type), {
+      signal,
+      headers: { Accept: "application/geo+json, application/json" },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.error || payload.type !== "FeatureCollection") {
+      throw new Error(payload.error?.message || `District service returned ${response.status}.`);
     }
-  } else {
-    lines.push(`| Not available | — | — | — |`);
-  }
-  lines.push(``);
+    return (payload.features || [])
+      .filter((feature) => feature.geometry && feature.properties?.DISTRICT)
+      .map((feature) => ({
+        value: String(feature.properties.DISTRICT).trim(),
+        contains: createPointInGeometryTester(feature.geometry),
+      }));
+  };
+  const councilSources = GEOGRAPHY_CONFIG.countyCouncil.sources.filter((source) => counties.has(source.county));
+  const loadCouncilDistricts = async () => (await loadCountyCouncilChoices(signal, councilSources)).map((feature) => ({
+    county: feature.properties.COUNTY,
+    value: feature.properties.GEOGRAPHY_LABEL.split(" — ").slice(1).join(" — "),
+    contains: createPointInGeometryTester(feature.geometry),
+  }));
+  const names = ["legislative", "congressional", "county council"];
+  const results = await Promise.allSettled([
+    loadDistricts("assembly"),
+    loadDistricts("congressional"),
+    councilSources.length ? loadCouncilDistricts() : [],
+  ]);
+  if (signal.aborted) throw new DOMException("The request was aborted.", "AbortError");
+  const [legislative, congressional, council] = results.map((result, index) => {
+    if (result.status === "fulfilled") return result.value;
+    console.warn(`Could not load ${names[index]} districts for the parcel export:`, result.reason);
+    return [];
+  });
+  return { legislative, congressional, council };
+}
 
-  // Definitions
-  lines.push(`## Definitions`);
-  lines.push(`- **Qualifying SFH parcel count:** number of single-family home accounts used for the SFH benchmarks: residential land use, structure square footage > 0, and building type excludes row/townhouses, condos and mobile homes.`);
-  lines.push(`- **Mean / Median SFH land / total:** arithmetic mean and median of qualifying SFH land-assessment-to-total-assessment ratios, expressed as percentages.`);
-  lines.push(`- **Hypothetical split-rate tax:** revenue computed by applying the selected split land and improvement rates to parcel-level assessments.`);
-  lines.push(``);
-  lines.push(`Source: Maryland iMAP parcel points (one per tax account): ${PARCEL_POINTS_LAYER_URL}.`);
-  lines.push(`Exported: ${now}`);
+function findDistrict(districts, point) {
+  return point ? districts.find((district) => district.contains(point))?.value ?? "" : "";
+}
 
-  return lines.join("\n");
+function roundCents(value) {
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : "";
 }
 
 function metadataText() {
-  const citationTime = new Date().toISOString();
+  const accessed = latestTaxSummary?.loadedAt || new Date().toISOString();
+  const threshold = formatPercent(ABOUT_THE_SAME_THRESHOLD * 100);
   return `Parcel Analysis MD tax analysis export metadata
 
-SUMMARY STATISTICS CSV
-Columns:
-- section: summary, current_tax, or hypothetical_tax.
-- metric: summary metric or breakdown description.
-- value: scalar summary value.
-- breakdown_level: blank, county, or jurisdiction.
-- county / municipality / jurisdiction: normalized tax geography. A municipality appears only when its rate differs from the county rate.
-- tax_rate_percent: applicable current tax rate for a jurisdiction.
-- parcel_count: number of matching parcels in the jurisdiction.
-- total_assessed_value: total NFMTTLVL for current-tax jurisdiction rows.
-- current_tax_total: predicted current tax total for current-tax jurisdiction rows.
-- split_land_rate_percent / split_improvement_rate_percent: scenario rates used for hypothetical rows.
-- hypothetical_tax_total: split-rate revenue for hypothetical jurisdiction rows.
-- Qualifying SFH parcel count: number of single-family home accounts used for the benchmarks: LU = R, SQFTSTRC > 0, and DESCBLDG one of ${SFH_BUILDING_TYPES.join(", ")}. Row/townhouses, condos and mobile homes are excluded.
-- Mean SFH land / total percent: arithmetic mean of qualifying SFH land-assessment-to-total-assessment ratios, expressed as a percentage.
-- Median SFH land / total percent: median of qualifying SFH land-assessment-to-total-assessment ratios, expressed as a percentage.
+All exports cover taxable accounts only: ${TAX_CONFIG.where}
+Each account is one point in the Maryland iMAP parcel points layer (condominium units are separate accounts).
+Tax figures are county real property tax only. Homestead and Homeowners' tax credits, assessment phase-ins, and other credits are not modeled.
+
+SUMMARY STATISTICS (TXT)
+Plain-text report with these sections:
+- Header: geography, geography type, when parcel data was loaded, and when the report was generated.
+- Scenario settings: the rate-setting mode and, for each editable row, current rate, land rate, improvement rate, and land : improvement ratio. Hypothetical sections are omitted when any rate is not entered.
+- Headline: current and hypothetical county tax, the change, the share of accounts paying less, about the same, and more, and results for owner-occupied single-family homes.
+- Key metrics: taxable accounts, land and assessed value totals, land share, and SFH benchmark values.
+- Who pays more and who pays less: by property type, by owner occupancy, and by place (county, then municipalities with a distinct rate and the rest of the county). For each group:
+  - Parcels, Current tax, Hypothetical tax, Change, Change % (of current tax).
+  - Share now / Share after: the group's share of all current / hypothetical tax in the selection.
+  - Pay less / Pay more: bill falls / rises by more than ${threshold}. About the same: within ${threshold}.
+  - Median change: middle percent change in bills. Avg change per parcel: total change / accounts.
+- Caveats, definitions, and source.
+Estimation: tax totals, changes, tax shares, and averages are exact sums. Within a tax jurisdiction, a bill's percent change depends only on the account's land share (land value / total assessed value), so pay less / about the same / pay more shares and medians are estimated from counts of accounts at each 5-point land-share step (0%, 5%, ..., 95%, 100%), interpolated within each step.
+
+Property types (each account counts in the first type it matches, in this order):
+${PROPERTY_TYPES.map((type) => `- ${type.label}: ${type.definition}`).join("\n")}
+
+Owner occupancy (SDAT owner-occupancy code, OOI):
+- H: owner-occupied principal residence.
+- N: not owner-occupied.
+- D: reported separately; its meaning is not documented here.
+- Not reported: blank code.
+
+SFH benchmarks:
+- Qualifying SFH parcel count: accounts with LU = R, SQFTSTRC > 0, and DESCBLDG one of ${SFH_BUILDING_TYPES.join(", ")}. Row/townhouses, condos, and mobile homes are excluded.
+- Mean / Median SFH land share: arithmetic mean / median of qualifying SFH land-to-total assessment ratios.
 
 DETAILED PARCEL CSV
 Columns:
-- ACCTID: tax account identifier. Each row is one account (condo units are separate rows).
+- ACCTID: tax account identifier.
 - ADDRESS, street fields, CITY, ZIPCODE: address attributes from Maryland iMAP.
-- DESCLU, LU, ACRES, SQFTSTRC, YEARBLT, ZONING, BLDG_UNITS, OOI: selected parcel characteristics.
-- NFMLNDVL: land assessment.
-- NFMIMPVL: improvement assessment; null values are exported as 0.
+- DESCLU, LU, DESCBLDG, ACRES, SQFTSTRC, YEARBLT, ZONING, BLDG_UNITS, OOI: selected parcel characteristics.
+- PROPERTY_TYPE: report property type (see Property types above).
+- OWNER_OCCUPANCY: report owner-occupancy group (see Owner occupancy above).
+- NFMLNDVL: land assessment; blank values are exported as 0.
+- NFMIMPVL: improvement assessment; blank values are exported as 0.
 - NFMTTLVL: total assessment.
-- DISTRICT: selected General Assembly or congressional district value when applicable.
 - JURSCODE, TOWNCODE, DESCTOWN: source jurisdiction attributes.
-- APPLICABLE_TAX_RATE_PERCENT: actual applicable county or distinct municipal rate.
-- PREDICTED_TAX_BILL: NFMTTLVL multiplied by the applicable rate.
-- SPLIT_LAND_RATE_PERCENT / SPLIT_IMPROVEMENT_RATE_PERCENT: selected scenario input rates.
-- HYPOTHETICAL_SPLIT_RATE_BILL: land assessment times split land rate plus improvements times split improvement rate.
-- UNDERUTILIZED_VACANT: "No assessed value for improvements, or improvements=$0."
-- UNDERUTILIZED_LAND_MAJORITY: "Land value is greater than improvements value."
-- UNDERUTILIZED_HIGH_VALUE_URBAN: "Land value is at least $1M and greater than improvements value. The parcel is also in an urban area (cluster with population greater than 2,000)."
-- UNDERUTILIZED_ABOVE_MEAN_SFH_LAND_RATIO: "1 when a non-SFH parcel's land-to-total assessment ratio is strictly greater than the arithmetic mean land-to-total assessment ratio for qualifying SFH parcels in the geographic bounds of interest; otherwise 0."
-- UNDERUTILIZED_ABOVE_MEDIAN_SFH_LAND_RATIO: "1 when a non-SFH parcel's land-to-total assessment ratio is strictly greater than the median land-to-total assessment ratio for qualifying SFH parcels in the geographic bounds of interest; otherwise 0."
+- COUNTY: county from JURSCODE.
+- TAX_MUNICIPALITY: municipality whose rate differs from the county rate; blank for the rest of the county.
+- LEGISLATIVE_DISTRICT: Maryland General Assembly district containing the account point.
+- CONGRESSIONAL_DISTRICT: U.S. congressional district containing the account point.
+- COUNTY_COUNCIL_DISTRICT: county council or commissioner district containing the account point.
+  District columns are blank when the point falls outside every boundary or a boundary service could not be loaded.
+- APPLICABLE_TAX_RATE_PERCENT: current county rate, or the municipal rate where it differs.
+- PREDICTED_TAX_BILL: NFMTTLVL x applicable rate.
+- SPLIT_LAND_RATE_PERCENT / SPLIT_IMPROVEMENT_RATE_PERCENT: scenario rates for the account's tax jurisdiction at export time.
+- HYPOTHETICAL_SPLIT_RATE_BILL: land assessment x split land rate + improvement assessment x split improvement rate.
+- BILL_CHANGE: HYPOTHETICAL_SPLIT_RATE_BILL - PREDICTED_TAX_BILL.
+- BILL_CHANGE_PERCENT: BILL_CHANGE as a percent of PREDICTED_TAX_BILL.
+  Split-rate, hypothetical, and change columns are blank when a rate is not entered or not known.
+- UNDERUTILIZED_VACANT: 1 when there is no assessed value for improvements, or improvements = $0.
+- UNDERUTILIZED_LAND_MAJORITY: 1 when land value is greater than improvements value.
+- UNDERUTILIZED_HIGH_VALUE_URBAN: 1 when land value is at least $1M and greater than improvements value, and the account is in an urban area (cluster with population greater than 2,000).
+- UNDERUTILIZED_ABOVE_MEAN_SFH_LAND_RATIO: 1 when a non-SFH account's land-to-total assessment ratio is greater than the mean for qualifying SFH accounts in the selection.
+- UNDERUTILIZED_ABOVE_MEDIAN_SFH_LAND_RATIO: 1 when a non-SFH account's land-to-total assessment ratio is greater than the median for qualifying SFH accounts in the selection.
 
-Source: Maryland iMAP parcel points: ${PARCEL_POINTS_LAYER_URL}. Accessed ${citationTime}.
-`;  // Double-check the definitions, especially for underutilized SFH comparison metrics
+Source: Maryland iMAP parcel points: ${PARCEL_POINTS_LAYER_URL}. Accessed ${accessed}.
+`;
 }
 
 function ensureUrbanFeatures() {
@@ -2028,55 +2512,67 @@ async function loadTaxRecordsForDownload(signal) {
 }
 
 async function detailedParcelCsv(signal) {
+  const scenario = scenarioSnapshot();
   const records = await loadTaxRecordsForDownload(signal);
-  const urbanFeatures = await ensureUrbanFeatures();
-  const valid = records.map((record) => {
-    const properties = record.properties;
+  setStatus("Matching parcels to districts and urban areas…", "loading");
+  const counties = new Set(records.map(({ properties }) => taxJurisdictionDetails(properties).county));
+  const [urbanFeatures, districts] = await Promise.all([
+    ensureUrbanFeatures(),
+    loadParcelDistricts(counties, signal),
+  ]);
+  const meanSfhLandRatio = latestTaxSummary?.meanSfhLandRatio ?? null;
+  const medianSfhLandRatio = latestTaxSummary?.medianSfhLandRatio ?? null;
+  const headers = [
+    "ACCTID", "ADDRESS", "STRTNUM", "STRTDIR", "STRTNAM", "STRTTYP", "STRTSFX", "STRTUNT",
+    "CITY", "ZIPCODE", "DESCLU", "LU", "DESCBLDG", "PROPERTY_TYPE", "ACRES", "SQFTSTRC", "YEARBLT",
+    "NFMLNDVL", "NFMIMPVL", "NFMTTLVL", "ZONING", "BLDG_UNITS", "OOI", "OWNER_OCCUPANCY",
+    "JURSCODE", "TOWNCODE", "DESCTOWN", "COUNTY", "TAX_MUNICIPALITY",
+    "LEGISLATIVE_DISTRICT", "CONGRESSIONAL_DISTRICT", "COUNTY_COUNCIL_DISTRICT",
+    "APPLICABLE_TAX_RATE_PERCENT", "PREDICTED_TAX_BILL", "SPLIT_LAND_RATE_PERCENT", "SPLIT_IMPROVEMENT_RATE_PERCENT",
+    "HYPOTHETICAL_SPLIT_RATE_BILL", "BILL_CHANGE", "BILL_CHANGE_PERCENT",
+    "UNDERUTILIZED_VACANT", "UNDERUTILIZED_LAND_MAJORITY",
+    "UNDERUTILIZED_HIGH_VALUE_URBAN", "UNDERUTILIZED_ABOVE_MEAN_SFH_LAND_RATIO",
+    "UNDERUTILIZED_ABOVE_MEDIAN_SFH_LAND_RATIO",
+  ];
+  const rows = records.map(({ center, properties }) => {
     const land = Number(properties.NFMLNDVL);
     const total = Number(properties.NFMTTLVL);
     const improvement = properties.NFMIMPVL === null || properties.NFMIMPVL === undefined
       ? 0
       : Number(properties.NFMIMPVL);
     const ratio = Number.isFinite(land) && Number.isFinite(total) && total > 0 ? land / total : null;
-    return { center: record.center, properties, land, total, improvement, ratio };
-  });
-  const meanSfhLandRatio = latestTaxSummary?.meanSfhLandRatio ?? null;
-  const medianSfhLandRatio = latestTaxSummary?.medianSfhLandRatio ?? null;
-  const geographyType = elements.geographyTypeSelect.value;
-  const selectedDistrict = ["assembly", "congressional"].includes(geographyType)
-    ? selectedGeography?.properties?.DISTRICT || ""
-    : "";
-  const rates = currentScenarioRates();
-  const headers = [
-    "ACCTID", "ADDRESS", "STRTNUM", "STRTDIR", "STRTNAM", "STRTTYP", "STRTSFX", "STRTUNT",
-    "CITY", "ZIPCODE", "DESCLU", "LU", "ACRES", "SQFTSTRC", "YEARBLT", "NFMLNDVL", "NFMIMPVL", "NFMTTLVL",
-    "ZONING", "BLDG_UNITS", "OOI", "DISTRICT", "JURSCODE", "TOWNCODE", "DESCTOWN",
-    "APPLICABLE_TAX_RATE_PERCENT", "PREDICTED_TAX_BILL", "SPLIT_LAND_RATE_PERCENT", "SPLIT_IMPROVEMENT_RATE_PERCENT",
-    "HYPOTHETICAL_SPLIT_RATE_BILL", "UNDERUTILIZED_VACANT", "UNDERUTILIZED_LAND_MAJORITY",
-    "UNDERUTILIZED_HIGH_VALUE_URBAN", "UNDERUTILIZED_ABOVE_MEAN_SFH_LAND_RATIO",
-    "UNDERUTILIZED_ABOVE_MEDIAN_SFH_LAND_RATIO",
-  ];
-  const rows = valid.map(({ center, properties, land, total, improvement, ratio }) => {
     const isUrban = center && urbanFeatures.some((urban) => urban.geometry && pointInGeometry(center, urban.geometry));
     const vacant = properties.NFMIMPVL === null || properties.NFMIMPVL === undefined
       ? Number.isFinite(land) && Number.isFinite(total) && land === total
       : improvement === 0;
-    const landMajority = Number.isFinite(land) && Number.isFinite(total) && land >= total / 2;
+    const landMajority = Number.isFinite(land) && Number.isFinite(total) && land > total / 2;
     const highValueUrban = Number.isFinite(land) && land >= 1000000 && landMajority && isUrban;
-    const aboveMeanSfh = !isSingleFamilyParcel(properties)
-      && ratio !== null && meanSfhLandRatio !== null && ratio > meanSfhLandRatio;
-    const aboveMedianSfh = !isSingleFamilyParcel(properties)
-      && ratio !== null && medianSfhLandRatio !== null && ratio > medianSfhLandRatio;
-    const actualRate = taxRateForParcel(properties);
+    const isSfh = isSingleFamilyParcel(properties);
+    const aboveMeanSfh = !isSfh && ratio !== null && meanSfhLandRatio !== null && ratio > meanSfhLandRatio;
+    const aboveMedianSfh = !isSfh && ratio !== null && medianSfhLandRatio !== null && ratio > medianSfhLandRatio;
+    const details = taxJurisdictionDetails(properties);
+    const actualRate = details.rate;
     const predictedTax = Number.isFinite(total) && Number.isFinite(actualRate) ? total * actualRate : null;
-    const hypotheticalTax = (Number.isFinite(land) ? land * rates.landRate : 0) + improvement * rates.improvementRate;
+    const rates = scenario && Number.isFinite(actualRate) ? scenario.ratesFor(details) : null;
+    const hypotheticalTax = rates
+      ? (Number.isFinite(land) ? land * rates.land : 0) + improvement * rates.improvement
+      : null;
+    const change = predictedTax !== null && hypotheticalTax !== null ? hypotheticalTax - predictedTax : null;
+    const councilDistricts = districts.council.filter((district) => district.county === details.county);
     return [
       properties.ACCTID, properties.ADDRESS, properties.STRTNUM, properties.STRTDIR,
       properties.STRTNAM, properties.STRTTYP, properties.STRTSFX, properties.STRTUNT, properties.CITY, properties.ZIPCODE,
-      properties.DESCLU, properties.LU, properties.ACRES, properties.SQFTSTRC, properties.YEARBLT, land, improvement,
-      total, properties.ZONING, properties.BLDG_UNITS, properties.OOI, selectedDistrict, properties.JURSCODE, properties.TOWNCODE,
-      properties.DESCTOWN, Number.isFinite(actualRate) ? actualRate * 100 : "", predictedTax, rates.landRate * 100,
-      rates.improvementRate * 100, hypotheticalTax, vacant ? 1 : 0, landMajority ? 1 : 0, highValueUrban ? 1 : 0,
+      properties.DESCLU, properties.LU, properties.DESCBLDG, propertyTypeFor(properties).label,
+      properties.ACRES, properties.SQFTSTRC, properties.YEARBLT, land, improvement, total,
+      properties.ZONING, properties.BLDG_UNITS, properties.OOI, occupancyGroupFor(properties.OOI).label,
+      properties.JURSCODE, properties.TOWNCODE, properties.DESCTOWN, details.county, details.municipality ?? "",
+      findDistrict(districts.legislative, center), findDistrict(districts.congressional, center),
+      findDistrict(councilDistricts, center),
+      Number.isFinite(actualRate) ? formatRateInput(actualRate) : "", roundCents(predictedTax),
+      rates ? formatRateInput(rates.land) : "", rates ? formatRateInput(rates.improvement) : "",
+      roundCents(hypotheticalTax), roundCents(change),
+      change !== null && predictedTax > 0 ? Number(((change / predictedTax) * 100).toFixed(2)) : "",
+      vacant ? 1 : 0, landMajority ? 1 : 0, highValueUrban ? 1 : 0,
       aboveMeanSfh ? 1 : 0, aboveMedianSfh ? 1 : 0,
     ];
   });
@@ -2241,7 +2737,7 @@ function isUnderutilized(properties, center) {
   const total = Number(properties.NFMTTLVL);
   const improvement = Number(properties.NFMIMPVL);
   const ratio = Number.isFinite(land) && Number.isFinite(total) && total > 0 ? land / total : null;
-  const landMajority = Number.isFinite(land) && Number.isFinite(total) && land >= total / 2;
+  const landMajority = Number.isFinite(land) && Number.isFinite(total) && land > total / 2;
   switch (context.mode) {
     case "vacant":
       return Number.isFinite(improvement)
@@ -2273,71 +2769,6 @@ async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
     medianSfhLandRatio: latestTaxSummary?.medianSfhLandRatio ?? null,
   };
   parcelLayer?.restyle();
-}
-
-async function loadParcelValueTotal(geography, field, signal) {
-  const query = parcelAggregateRequest(geography, [
-    { statisticType: "avg", onStatisticField: field, outStatisticFieldName: "averageValue" },
-    { statisticType: "count", onStatisticField: field, outStatisticFieldName: "valueCount" },
-  ]);
-  const response = await fetch(query.url, {
-    ...query.options,
-    signal,
-    headers: { Accept: "application/json" },
-  });
-  const payload = await response.json();
-  if (!response.ok || payload.error) {
-    throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
-  }
-  const attributes = payload.features?.[0]?.attributes || {};
-  const average = Number(attributes.averageValue);
-  const count = Number(attributes.valueCount);
-  return Number.isFinite(average) && Number.isFinite(count) ? average * count : 0;
-}
-
-async function loadGroupedHypotheticalTax(geography, landRate, improvementRate, signal) {
-  const query = parcelGroupedStatisticsRequest(geography, [
-    { statisticType: "avg", onStatisticField: "NFMLNDVL", outStatisticFieldName: "averageLand" },
-    { statisticType: "count", onStatisticField: "NFMLNDVL", outStatisticFieldName: "landCount" },
-    { statisticType: "avg", onStatisticField: "NFMIMPVL", outStatisticFieldName: "averageImprovement" },
-    { statisticType: "count", onStatisticField: "NFMIMPVL", outStatisticFieldName: "improvementCount" },
-  ]);
-  const response = await fetch(query.url, {
-    ...query.options,
-    signal,
-    headers: { Accept: "application/json" },
-  });
-  const payload = await response.json();
-  if (!response.ok || payload.error) {
-    throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
-  }
-
-  const byCounty = new Map();
-  const byJurisdiction = new Map();
-  payload.features?.forEach((feature) => {
-    const attributes = feature.attributes || {};
-    const details = taxJurisdictionDetails(attributes);
-    const { county, jurisdiction } = details;
-    const land = Number(attributes.averageLand) * Number(attributes.landCount);
-    const improvement = Number(attributes.averageImprovement) * Number(attributes.improvementCount);
-    const parcelCount = Number(attributes.landCount);
-    const revenue = (Number.isFinite(land) ? land * landRate : 0)
-      + (Number.isFinite(improvement) ? improvement * improvementRate : 0);
-    byCounty.set(county, (byCounty.get(county) || 0) + revenue);
-    const existing = byJurisdiction.get(jurisdiction) || {
-      ...details,
-      parcelCount: 0,
-      landValue: 0,
-      improvementValue: 0,
-      hypotheticalTax: 0,
-    };
-    existing.parcelCount += Number.isFinite(parcelCount) ? parcelCount : 0;
-    existing.landValue += Number.isFinite(land) ? land : 0;
-    existing.improvementValue += Number.isFinite(improvement) ? improvement : 0;
-    existing.hypotheticalTax += revenue;
-    byJurisdiction.set(jurisdiction, existing);
-  });
-  return { byCounty, byJurisdiction };
 }
 
 // Split-rate scenario. All inputs are recalculated locally from the per-jurisdiction
@@ -2416,8 +2847,7 @@ function scenarioRateKey(details, scope = taxScenarioModel.scope) {
   return scope === "county" ? details.county : details.jurisdiction;
 }
 
-function scenarioRatesFor(details) {
-  const { scope, rates } = taxScenarioModel;
+function scenarioRatesFor(details, { scope, rates } = taxScenarioModel) {
   const entry = rates[scope][scenarioRateKey(details, scope)];
   const land = parseRatePercent(entry?.land);
   const improvement = parseRatePercent(entry?.improvement);
@@ -2693,6 +3123,8 @@ async function loadParcels() {
     if (currentRequest !== request || selectedGeography !== geographyAtRequestStart) return;
 
     currentTaxRate = taxSummary.countyTaxRate;
+    taxSummary.loadedAt = new Date().toISOString();
+    taxSummary.geographyTypeLabel = GEOGRAPHY_CONFIG[elements.geographyTypeSelect.value]?.label ?? null;
     latestTaxSummary = taxSummary;
     elements.parcelCount.textContent = taxSummary.parcelCount.toLocaleString();
     updateCurrentTaxCountyResults(taxSummary.currentTaxByJurisdiction);
@@ -2860,7 +3292,7 @@ elements.neutralRatio.addEventListener("input", () => elements.neutralRatio.setC
 elements.resetTaxModel.addEventListener("click", resetTaxScenario);
 elements.downloadSummary.addEventListener("click", () => {
   runDownload(
-    async (signal) => downloadTextFile(downloadBaseName("summary.md"), await summaryMarkdown(signal), "text/markdown;charset=utf-8"),
+    async (signal) => downloadTextFile(downloadBaseName("summary.txt"), await summaryText(signal), "text/plain;charset=utf-8"),
     "Summary statistics downloaded.",
   );
 });
