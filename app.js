@@ -11,7 +11,8 @@ const PARCEL_POINTS_LAYER_URL =
   "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0";
 // Shapes carry only one account's attributes, so they are not filtered by value, exemption, or town.
 // A shape renders when at least one qualifying account point falls inside it.
-const PARCEL_SHAPE_WHERE = "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE')";
+// Shapes without an account (e.g. condominium complex outlines) are kept so their unit points have a container.
+const PARCEL_SHAPE_WHERE = "ACCTID IS NULL OR ACCTID NOT IN ('ROW', 'UNK', 'GCE')";
 const SFH_BUILDING_TYPES = ["DWEL Standard Unit", "DWEL Split Level", "DWEL Split Foyer"];
 const SFH_WHERE = `LU = 'R' AND SQFTSTRC > 0 AND DESCBLDG IN (${SFH_BUILDING_TYPES.map((type) => `'${type}'`).join(", ")})`;
 const TOWNHOUSE_BUILDING_TYPES = ["DWEL Center Unit", "DWEL End Unit"];
@@ -1428,9 +1429,9 @@ function createParcelMapLayer(geography) {
       ? underutilizedStyle(createParcelStyle())
       : createParcelStyle();
   };
-  const orphanStyle = (point) => {
+  const orphanStyle = (points) => {
     const base = { radius: 5, color: TAX_CONFIG.color, weight: 1.5, fill: false };
-    return isUnderutilized(point.properties || {}, point.geometry.coordinates)
+    return points.some((point) => isUnderutilized(point.properties || {}, point.geometry.coordinates))
       ? { ...base, color: "#e56b2f", weight: 2.5 }
       : base;
   };
@@ -1438,7 +1439,7 @@ function createParcelMapLayer(geography) {
   layer.restyle = () => {
     if (!vectorLayer) return;
     vectorLayer.shapes.eachLayer((child) => child.setStyle(shapeStyle(child.feature)));
-    vectorLayer.orphans.forEach((marker) => marker.setStyle(orphanStyle(marker.point)));
+    vectorLayer.orphans.forEach((marker) => marker.setStyle(orphanStyle(marker.points)));
   };
 
   const showImage = async (signal) => {
@@ -1479,11 +1480,18 @@ function createParcelMapLayer(geography) {
         });
       },
     });
-    const orphanMarkers = orphans.map((point) => {
-      const [lng, lat] = point.geometry.coordinates;
-      const marker = L.circleMarker([lat, lng], orphanStyle(point));
-      marker.point = point;
-      marker.on("click", (event) => openAccountsPopup(event.latlng, [point.properties || {}]));
+    // Accounts that share a location (e.g. condo units) without a containing shape share one marker.
+    const orphansByLocation = new Map();
+    orphans.forEach((point) => {
+      const key = point.geometry.coordinates.join(",");
+      if (!orphansByLocation.has(key)) orphansByLocation.set(key, []);
+      orphansByLocation.get(key).push(point);
+    });
+    const orphanMarkers = [...orphansByLocation.values()].map((points) => {
+      const [lng, lat] = points[0].geometry.coordinates;
+      const marker = L.circleMarker([lat, lng], orphanStyle(points));
+      marker.points = points;
+      marker.on("click", (event) => openAccountsPopup(event.latlng, points.map((point) => point.properties || {})));
       return marker;
     });
     removeImage();
