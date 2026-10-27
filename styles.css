@@ -82,6 +82,12 @@ button {
   pointer-events: none;
 }
 
+.leaflet-control-zoom-level.is-below-highlight-zoom {
+  border-color: rgba(201, 152, 61, 0.7);
+  background: #fbf0d9;
+  color: #6f5212;
+}
+
 .leaflet-control-attribution {
   margin: 0 8px 8px 0 !important;
   border-radius: 7px;
@@ -363,6 +369,51 @@ h1 {
 
 .underutilized-description strong {
   color: var(--ink);
+}
+
+.underutilized-zoom-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 7px 1px 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.underutilized-zoom-hint.is-warning {
+  border-color: rgba(201, 152, 61, 0.6);
+  background: #fbf0d9;
+  color: #6f5212;
+  font-weight: 700;
+}
+
+.underutilized-zoom-hint.is-ready {
+  border-color: rgba(20, 107, 87, 0.16);
+  background: rgba(223, 242, 232, 0.5);
+}
+
+.underutilized-zoom-button {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border: 1px solid rgba(20, 107, 87, 0.4);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.underutilized-zoom-button:hover,
+.underutilized-zoom-button:focus-visible {
+  background: var(--green);
+  color: #fffdf8;
 }
 
 .underutilized-definitions {

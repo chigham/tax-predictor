@@ -3,7 +3,7 @@ const PARCEL_LAYER_URL =
 const PARCEL_MAP_SERVICE_URL = PARCEL_LAYER_URL.replace(/\/0$/, "");
 const STATE_CENTER = [39.2, -76.7];
 const STATE_ZOOM = 8;
-const VECTOR_MIN_ZOOM = 15;
+const VECTOR_MIN_ZOOM = 14;
 const MAX_PARCELS_PER_REQUEST = 1000;
 const PARCEL_OUT_FIELDS =
   "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN,DESCBLDG";
@@ -497,6 +497,9 @@ const elements = {
   underutilizedSelect: document.querySelector("#underutilized-select"),
   underutilizedDescription: document.querySelector("#underutilized-description"),
   underutilizedDescriptionText: document.querySelector("#underutilized-description-text"),
+  underutilizedZoomHint: document.querySelector("#underutilized-zoom-hint"),
+  underutilizedZoomHintText: document.querySelector("#underutilized-zoom-hint-text"),
+  underutilizedZoomButton: document.querySelector("#underutilized-zoom-button"),
   selectedGeography: document.querySelector("#selected-geography"),
   acknowledgements: document.querySelector(".acknowledgements"),
   acknowledgementsTrigger: document.querySelector(".acknowledgements-trigger"),
@@ -3353,7 +3356,25 @@ function updateUnderutilizedDescription() {
   const description = definition?.textContent.trim() || "";
   elements.underutilizedDescriptionText.textContent = description;
   elements.underutilizedDescription.hidden = !description;
+  updateUnderutilizedZoomHint();
 }
+
+function updateUnderutilizedZoomHint() {
+  const zoom = map.getZoom();
+  const belowMinZoom = zoom < VECTOR_MIN_ZOOM;
+  const highlightsHidden = belowMinZoom && Boolean(elements.underutilizedSelect.value);
+  elements.underutilizedZoomHint.classList.toggle("is-warning", highlightsHidden);
+  elements.underutilizedZoomHint.classList.toggle("is-ready", !belowMinZoom);
+  elements.underutilizedZoomHintText.textContent = belowMinZoom
+    ? `Highlights only appear at zoom ${VECTOR_MIN_ZOOM} or closer. Current zoom: ${zoom}.`
+    : `Zoom ${zoom}: underutilized parcels are highlighted on the map.`;
+  elements.underutilizedZoomButton.textContent = `Zoom to ${VECTOR_MIN_ZOOM}`;
+  elements.underutilizedZoomButton.hidden = !belowMinZoom;
+  zoomLevelIndicator.classList.toggle("is-below-highlight-zoom", highlightsHidden);
+}
+
+map.on("zoomend", updateUnderutilizedZoomHint);
+elements.underutilizedZoomButton.addEventListener("click", () => map.setZoom(VECTOR_MIN_ZOOM));
 
 elements.underutilizedSelect.addEventListener("change", () => {
   updateUnderutilizedDescription();
@@ -3373,7 +3394,7 @@ elements.underutilizedSelect.addEventListener("change", () => {
         setStatus(
           map.getZoom() >= VECTOR_MIN_ZOOM
             ? "Underutilized parcel highlights applied."
-            : "Underutilized highlights applied. Zoom in to see parcel shapes.",
+            : `Underutilized view selected. Zoom to level ${VECTOR_MIN_ZOOM} or closer to see highlighted parcels.`,
           "success",
         );
       }
