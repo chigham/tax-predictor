@@ -823,6 +823,7 @@ h2 {
 }
 
 .scenario-ratio {
+  min-width: 0;
   margin: 12px 0 0;
   padding: 10px 11px;
   border: 1px solid rgba(201, 152, 61, 0.2);
@@ -837,12 +838,64 @@ h2 {
   font-weight: 700;
 }
 
-.scenario-ratio label {
-  display: block;
-  margin-bottom: 5px;
+.scenario-ratio legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 0;
   color: var(--muted);
   font-size: 10px;
   font-weight: 700;
+}
+
+.scenario-mode {
+  clear: both;
+  display: inline-flex;
+  margin-bottom: 7px;
+  padding: 2px;
+  border: 1px solid rgba(201, 152, 61, 0.35);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.scenario-mode label {
+  position: relative;
+  cursor: pointer;
+}
+
+.scenario-mode input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scenario-mode span {
+  display: block;
+  padding: 4px 10px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.scenario-mode input:checked + span {
+  background: #f7ecd5;
+  color: #8b671c;
+}
+
+.scenario-mode input:focus-visible + span {
+  outline: 2px solid rgba(201, 152, 61, 0.45);
+}
+
+.scenario-ratio__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scenario-ratio__group[hidden],
+.scenario-ratio__note[hidden] {
+  display: none;
 }
 
 .scenario-ratio__controls {

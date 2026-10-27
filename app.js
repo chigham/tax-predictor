@@ -469,7 +469,11 @@ const elements = {
   taxModelControls: document.querySelector("#tax-model-controls"),
   taxScopeControl: document.querySelector("#tax-scope-control"),
   taxScopeSelect: document.querySelector("#tax-scope-select"),
+  neutralModeInputs: document.querySelectorAll('input[name="neutral-mode"]'),
   neutralRatio: document.querySelector("#neutral-ratio"),
+  neutralRatioGroup: document.querySelector("#neutral-ratio-group"),
+  neutralLandOnlyNote: document.querySelector("#neutral-land-only-note"),
+  neutralHint: document.querySelector("#neutral-hint"),
   applyNeutralRatio: document.querySelector("#apply-neutral-ratio"),
   resetTaxModel: document.querySelector("#reset-tax-model"),
   taxModelResult: document.querySelector("#tax-model-result"),
@@ -3036,11 +3040,42 @@ function revenueNeutralUnits(model) {
   return model.counties.flatMap((county) => county.jurisdictions.map((details) => [details.jurisdiction, details]));
 }
 
+function neutralMode() {
+  return document.querySelector('input[name="neutral-mode"]:checked')?.value ?? "ratio";
+}
+
+function updateNeutralModeControls() {
+  const landOnly = neutralMode() === "land-only";
+  elements.neutralRatioGroup.hidden = landOnly;
+  elements.neutralLandOnlyNote.hidden = !landOnly;
+  elements.neutralRatio.setCustomValidity("");
+  elements.neutralHint.textContent = landOnly
+    ? "Taxes land only. Sets each editable row's land rate so its revenue matches current tax."
+    : "Land : improvement rate ratio. Sets each editable row's rates so its revenue matches current tax.";
+}
+
+// Land-only: land rate = current tax ÷ land value, improvements untaxed.
+function applyRevenueNeutralLandOnly(model) {
+  revenueNeutralUnits(model).forEach(([key, unit]) => {
+    if (unit.landValue <= 0) return;
+    model.rates[model.scope][key] = {
+      land: formatRateInput(unit.currentTax / unit.landValue),
+      improvement: "0",
+    };
+  });
+  renderTaxScenario();
+  setStatus("Applied revenue-neutral land-only rates (improvements untaxed).", "success");
+}
+
 // For land:improvement ratio k, solves improvement rate r so that
 // r × (k × land + improvements) equals each editable row's current tax.
 function applyRevenueNeutralRatio() {
   const model = taxScenarioModel;
   if (!model) return;
+  if (neutralMode() === "land-only") {
+    applyRevenueNeutralLandOnly(model);
+    return;
+  }
   const input = elements.neutralRatio;
   const ratio = Number(input.value);
   if (input.value.trim() === "" || !Number.isFinite(ratio) || ratio < 0) {
@@ -3296,6 +3331,7 @@ elements.taxScopeSelect.addEventListener("change", () => {
   renderTaxScenario();
 });
 elements.applyNeutralRatio.addEventListener("click", applyRevenueNeutralRatio);
+elements.neutralModeInputs.forEach((input) => input.addEventListener("change", updateNeutralModeControls));
 elements.neutralRatio.addEventListener("input", () => elements.neutralRatio.setCustomValidity(""));
 elements.resetTaxModel.addEventListener("click", resetTaxScenario);
 elements.downloadSummary.addEventListener("click", () => {
