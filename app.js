@@ -3196,6 +3196,85 @@ async function loadParcels() {
   }
 }
 
+const welcomePanel = document.querySelector(".welcome-panel");
+const welcomePanelResizeHandle = document.querySelector(".welcome-panel-resize-handle");
+const acknowledgements = document.querySelector(".acknowledgements");
+const stackedLayoutQuery = window.matchMedia("(max-width: 600px)");
+const WELCOME_PANEL_MIN_HEIGHT = 220;
+const WELCOME_PANEL_GAP = 12;
+
+function getWelcomePanelResizeLimits() {
+  const panelTop = welcomePanel.getBoundingClientRect().top;
+  const acknowledgementsTop = acknowledgements.getBoundingClientRect().top;
+  // In the small layout the tool panel sits below this one, so it becomes the lower boundary.
+  if (stackedLayoutQuery.matches && !elements.toolPanel.hidden) {
+    const maximum = elements.toolPanel.getBoundingClientRect().top - panelTop - WELCOME_PANEL_GAP;
+    return { minimum: Math.min(WELCOME_PANEL_MIN_HEIGHT, maximum), maximum };
+  }
+  // Keep the panel's bottom edge from rising above where the opened acknowledgements popover sits.
+  const openPopoverTop = acknowledgementsTop - 9 - elements.acknowledgementsPopover.offsetHeight;
+  const minimum = Math.max(WELCOME_PANEL_MIN_HEIGHT, openPopoverTop - panelTop - WELCOME_PANEL_GAP);
+  const maximum = acknowledgementsTop - panelTop - WELCOME_PANEL_GAP;
+  return { minimum: Math.min(minimum, maximum), maximum };
+}
+
+function applyWelcomePanelBounds() {
+  const { minimum, maximum } = getWelcomePanelResizeLimits();
+  welcomePanel.style.minHeight = `${minimum}px`;
+  welcomePanel.style.maxHeight = `${maximum}px`;
+  updateWelcomePanelResizeAria();
+}
+
+function updateWelcomePanelResizeAria(height = welcomePanel.getBoundingClientRect().height) {
+  const { minimum, maximum } = getWelcomePanelResizeLimits();
+  const boundedHeight = Math.max(minimum, Math.min(height, maximum));
+  welcomePanelResizeHandle.setAttribute("aria-valuemin", String(Math.round(minimum)));
+  welcomePanelResizeHandle.setAttribute("aria-valuemax", String(Math.round(maximum)));
+  welcomePanelResizeHandle.setAttribute("aria-valuenow", String(Math.round(boundedHeight)));
+}
+
+function setWelcomePanelHeight(height) {
+  const { minimum, maximum } = getWelcomePanelResizeLimits();
+  const boundedHeight = Math.max(minimum, Math.min(height, maximum));
+  welcomePanel.style.height = `${boundedHeight}px`;
+  updateWelcomePanelResizeAria(boundedHeight);
+}
+
+applyWelcomePanelBounds();
+new ResizeObserver(applyWelcomePanelBounds).observe(elements.toolPanel);
+
+welcomePanelResizeHandle.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  const startY = event.clientY;
+  const startHeight = welcomePanel.getBoundingClientRect().height;
+  welcomePanelResizeHandle.setPointerCapture(event.pointerId);
+
+  const resize = (pointerEvent) => {
+    setWelcomePanelHeight(startHeight + pointerEvent.clientY - startY);
+  };
+  const stopResize = () => {
+    welcomePanelResizeHandle.removeEventListener("pointermove", resize);
+    welcomePanelResizeHandle.removeEventListener("pointerup", stopResize);
+    welcomePanelResizeHandle.removeEventListener("pointercancel", stopResize);
+  };
+
+  welcomePanelResizeHandle.addEventListener("pointermove", resize);
+  welcomePanelResizeHandle.addEventListener("pointerup", stopResize);
+  welcomePanelResizeHandle.addEventListener("pointercancel", stopResize);
+});
+
+welcomePanelResizeHandle.addEventListener("keydown", (event) => {
+  const currentHeight = welcomePanel.getBoundingClientRect().height;
+  const step = event.shiftKey ? 40 : 16;
+  if (event.key === "ArrowUp") setWelcomePanelHeight(currentHeight + step);
+  else if (event.key === "ArrowDown") setWelcomePanelHeight(currentHeight - step);
+  else return;
+  event.preventDefault();
+});
+
+window.addEventListener("resize", applyWelcomePanelBounds);
+
 elements.geographyToggle.addEventListener("click", () => {
   const isOpen = !elements.geographyMenu.hidden;
   elements.geographyMenu.hidden = isOpen;

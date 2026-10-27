@@ -107,8 +107,43 @@ button {
   top: 32px;
   left: 32px;
   width: min(390px, calc(100vw - 64px));
+  min-height: min(220px, calc(100dvh - 92px));
+  max-height: calc(100dvh - 92px);
   padding: 25px;
   border-radius: 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.welcome-panel-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  height: 18px;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 6px;
+  background: linear-gradient(transparent, var(--paper));
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.welcome-panel-resize-handle::after {
+  width: 36px;
+  height: 4px;
+  border-top: 1px solid rgba(23, 33, 29, 0.35);
+  border-bottom: 1px solid rgba(23, 33, 29, 0.35);
+  border-radius: 2px;
+  content: "";
+}
+
+.welcome-panel-resize-handle:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: -3px;
 }
 
 .brand-lockup {
@@ -1222,7 +1257,7 @@ h2 {
   position: absolute;
   bottom: 18px;
   left: 18px;
-  z-index: 400;
+  z-index: 600;
 }
 
 .acknowledgements-trigger {
@@ -1405,8 +1440,8 @@ h2 {
   .welcome-panel {
     top: 14px;
     bottom: auto;
-    max-height: 42vh;
-    overflow-y: auto;
+    min-height: min(220px, calc(100dvh - 70px));
+    max-height: calc(100dvh - 70px);
   }
 
   .welcome-copy {
@@ -1426,9 +1461,8 @@ h2 {
   }
 
   .acknowledgements {
-    top: calc(42vh + 10px);
     right: auto;
-    bottom: auto;
+    bottom: 14px;
     left: 14px;
   }
 
