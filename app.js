@@ -1251,8 +1251,10 @@ function serverParcelExportRequest(geography) {
   const southwest = webMercatorPoint([bounds.getWest(), bounds.getSouth()]);
   const northeast = webMercatorPoint([bounds.getEast(), bounds.getNorth()]);
   const size = map.getSize();
-  const width = Math.min(Math.max(Math.ceil(size.x), 512), 2048);
-  const height = Math.min(Math.max(Math.ceil(size.y), 512), 2048);
+  // Scale uniformly: ArcGIS widens the bbox to match the image aspect ratio, which would misalign the overlay.
+  const scale = Math.min(1, 2048 / Math.max(size.x, size.y));
+  const width = Math.max(1, Math.round(size.x * scale));
+  const height = Math.max(1, Math.round(size.y * scale));
   const params = new URLSearchParams({
     bbox: `${southwest[0]},${southwest[1]},${northeast[0]},${northeast[1]}`,
     bboxSR: "3857",
