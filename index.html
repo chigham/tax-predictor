@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="A Maryland parcel analysis tool."
+      content="Explore Maryland property tax scenarios: tax land more, tax buildings less, and compare modeled revenue and parcel impacts."
     />
     <title>Parcel Analysis | Maryland</title>
     <link
@@ -19,9 +19,53 @@
   </head>
   <body>
     <main class="app-shell">
-      <div id="map" class="map" aria-label="Interactive map of Maryland"></div>
+      <div id="map" class="map" aria-label="Interactive map of Maryland" inert></div>
 
-      <section class="welcome-panel" aria-labelledby="app-title">
+      <section id="landing-screen" class="landing-screen" aria-labelledby="landing-title">
+        <div class="landing-card">
+          <div class="landing-main">
+            <p class="landing-brand"><span class="brand-mark" aria-hidden="true">PA<br>MD</span> Maryland property tax explorer</p>
+            <p class="eyebrow">A clearer way to explore property tax</p>
+            <h1 id="landing-title">Tax land more.<br><span>Tax buildings less.</span></h1>
+            <p class="landing-lede">Explore how a split-rate property tax could shift taxes toward land, keep modeled revenue steady, and reward building on valuable sites.</p>
+            <div class="landing-actions">
+              <button id="start-with-county" class="landing-primary" type="button">Start with your county <span aria-hidden="true">→</span></button>
+              <a id="methodology-link" class="landing-methodology" href="#methodology-dialog">How the analysis works <span aria-hidden="true">↗</span></a>
+            </div>
+            <ul class="landing-benefits" aria-label="What you can explore">
+              <li><span class="benefit-icon" aria-hidden="true">↔</span><span><strong>Revenue-neutral scenarios</strong><small>Compare a new approach with estimated current tax.</small></span></li>
+              <li><span class="benefit-icon" aria-hidden="true">⌂</span><span><strong>Who pays more or less</strong><small>Explore estimated effects across property types.</small></span></li>
+              <li><span class="benefit-icon" aria-hidden="true">⌂</span><span><strong>Reward building, support more homes</strong><small>Explore how the tax shift could encourage productive use.</small></span></li>
+            </ul>
+            <p class="landing-caveat">Exploratory estimates—not official tax bills or policy advice.</p>
+          </div>
+          <aside class="landing-aside" aria-label="How to get started">
+            <span class="aside-kicker">A quick starting point</span>
+            <h2>One county.<br>Three simple steps.</h2>
+            <ol class="landing-steps">
+              <li><span>01</span><p><strong>Choose a county</strong><small>We’ll open the county selector for you.</small></p></li>
+              <li><span>02</span><p><strong>Review the baseline</strong><small>See modeled parcel and tax estimates.</small></p></li>
+              <li><span>03</span><p><strong>Try a split rate</strong><small>Adjust the scenario and compare results.</small></p></li>
+            </ol>
+            <div class="aside-note"><span aria-hidden="true">i</span><p>You can switch to districts, municipalities, or other geographies anytime.</p></div>
+          </aside>
+        </div>
+      </section>
+
+      <dialog id="methodology-dialog" class="methodology-dialog" aria-labelledby="methodology-title">
+        <div class="methodology-header">
+          <div><p class="eyebrow">About the estimates</p><h2 id="methodology-title">How the analysis works</h2></div>
+          <button id="close-methodology" class="dialog-close" type="button" aria-label="Close methodology">×</button>
+        </div>
+        <p>Each included point represents one Maryland tax account, including individual condominium units. The analysis uses accounts with positive appraised full value, no exemption class, and a non-placeholder account ID. Maryland iMAP parcel and assessment data are grouped by the selected county, district, or municipality.</p>
+        <h3>Comparing tax scenarios</h3>
+        <p>Estimated current tax uses the app’s county and municipal rate table. A split-rate scenario applies separate rates to assessed land value and improvements. The revenue-neutral preset chooses rates intended to match the modeled current total for the selected area.</p>
+        <div class="methodology-note"><strong>Important limitation</strong><p>These are exploratory estimates. The rate table is a prototype source, and the parcel data and filters are not a complete tax determination. Results are not official bills; confirm rates and assessments with authoritative county and state sources before relying on them.</p></div>
+        <p class="methodology-source">Data: <a href="https://imap.maryland.gov/" target="_blank" rel="noopener">Maryland iMAP</a>. See the <a href="README.md#data-service">data notes</a> for source and query details.</p>
+      </dialog>
+
+      <section class="welcome-panel" aria-labelledby="app-title" inert>
+        <button id="back-to-overview" class="overview-link" type="button"><span aria-hidden="true">←</span> Overview</button>
         <div class="brand-lockup">
           <span class="brand-mark" aria-hidden="true">PA<br>MD</span>
           <div>
@@ -111,7 +155,7 @@
         <div class="welcome-panel-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize selection panel" tabindex="0"></div>
       </section>
 
-      <aside id="tool-panel" class="tool-panel" aria-labelledby="tool-title" hidden>
+      <aside id="tool-panel" class="tool-panel" aria-labelledby="tool-title" hidden inert>
         <p id="tool-kicker" class="eyebrow">Analysis tool</p>
         <h2 id="tool-title">Analysis tool</h2>
         <p id="selected-geography" class="selected-geography">All Maryland</p>
@@ -191,11 +235,11 @@
         <p class="unofficial-note">Planning and tax conclusions should require official review.</p>
       </aside>
 
-      <div class="map-status" aria-live="polite">
+      <div class="map-status" aria-live="polite" inert>
         <span id="map-status-text">Select a tool to load parcels</span>
       </div>
 
-      <div class="acknowledgements">
+      <div class="acknowledgements" inert>
         <button class="acknowledgements-trigger" type="button" aria-label="Show data sources" aria-expanded="false" aria-controls="acknowledgements-popover">
           <span aria-hidden="true">ⓘ</span> Data sources
         </button>

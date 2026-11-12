@@ -454,6 +454,12 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 const elements = {
+  landingScreen: document.querySelector("#landing-screen"),
+  startWithCounty: document.querySelector("#start-with-county"),
+  backToOverview: document.querySelector("#back-to-overview"),
+  methodologyLink: document.querySelector("#methodology-link"),
+  methodologyDialog: document.querySelector("#methodology-dialog"),
+  closeMethodology: document.querySelector("#close-methodology"),
   toolPanel: document.querySelector("#tool-panel"),
   toolKicker: document.querySelector("#tool-kicker"),
   toolTitle: document.querySelector("#tool-title"),
@@ -525,6 +531,7 @@ let underutilizedUpdateId = 0;
 let underutilizedContext = null;
 let urbanFeaturesPromise = null;
 let parcelLoadingMarker = null;
+let focusCountyChoiceAfterLoad = false;
 
 function setStatus(message, state = "ready") {
   elements.statusMessage.textContent = message;
@@ -922,8 +929,16 @@ async function loadGeographyChoices(type) {
       elements.geographyChoiceSelect.add(new Option(config.formatChoice(value), value));
     });
     elements.geographyChoiceSelect.disabled = false;
+    if (focusCountyChoiceAfterLoad && type === "county") {
+      focusCountyChoiceAfterLoad = false;
+      elements.geographyChoiceSelect.focus();
+    }
   } catch (error) {
     if (error.name === "AbortError" || geographyLoadRequest !== request) return;
+    if (focusCountyChoiceAfterLoad && type === "county") {
+      focusCountyChoiceAfterLoad = false;
+      elements.geographyTypeSelect.focus();
+    }
     console.error(error);
     elements.geographyChoiceSelect.replaceChildren(new Option("Choices unavailable", ""));
     updateMapStatus(`Could not load ${config.label.toLowerCase()}`);
@@ -3285,6 +3300,48 @@ elements.geographyToggle.addEventListener("click", () => {
   elements.geographyMenu.hidden = isOpen;
   elements.geographyToggle.setAttribute("aria-expanded", String(!isOpen));
 });
+
+function setLandingVisible(isVisible) {
+  elements.landingScreen.hidden = !isVisible;
+  [
+    document.querySelector("#map"),
+    document.querySelector(".welcome-panel"),
+    elements.toolPanel,
+    elements.mapStatus.closest(".map-status"),
+    elements.acknowledgements,
+  ].forEach((element) => {
+    element.inert = isVisible;
+  });
+
+  if (isVisible) {
+    elements.geographyMenu.hidden = true;
+    elements.geographyToggle.setAttribute("aria-expanded", "false");
+    setAcknowledgementsOpen(false);
+    elements.startWithCounty.focus();
+    return;
+  }
+
+  requestAnimationFrame(() => map.invalidateSize());
+}
+
+elements.startWithCounty.addEventListener("click", () => {
+  setLandingVisible(false);
+  elements.geographyTypeSelect.value = "county";
+  elements.geographyMenu.hidden = false;
+  elements.geographyToggle.setAttribute("aria-expanded", "true");
+  focusCountyChoiceAfterLoad = true;
+  elements.geographyTypeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+});
+
+elements.backToOverview.addEventListener("click", () => setLandingVisible(true));
+
+elements.methodologyLink.addEventListener("click", (event) => {
+  event.preventDefault();
+  elements.methodologyDialog.showModal();
+});
+
+elements.closeMethodology.addEventListener("click", () => elements.methodologyDialog.close());
+elements.methodologyDialog.addEventListener("close", () => elements.methodologyLink.focus());
 
 function setAcknowledgementsOpen(isOpen) {
   elements.acknowledgements.classList.toggle("is-open", isOpen);
