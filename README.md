@@ -54,7 +54,8 @@ Christopher's wish list:
 1. Optimize optimize optimize. Especially loading parcel geometries if possible. - Always in-progress
 2. Make sure underutilized selection follows the same logic as parcel selection for different geographies.
 3. Refine landing page and how-analysis-works popup text.
-4. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations. - Add this to a separate app
+4. Add an advanced feature, where they can apply the changes only to: 1. urban areas, 2. municipalities, or 3. exclude agriculture.
+5. Implement ADU analysis, like setback buffers, building footprints, parking spaces (if available), owner-occupied (if applicable), ADU already existing, and county-by-county regulations. - Add this to a separate app
 
 
 ## CURRENT BUGS
