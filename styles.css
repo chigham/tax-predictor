@@ -1847,6 +1847,64 @@ h2 {
   text-align: right;
 }
 
+.parcel-popup-change.is-lower {
+  color: #1d5c9a;
+}
+
+.parcel-popup-change.is-higher {
+  color: #9a1d1d;
+}
+
+.bill-change-legend {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  z-index: 1000;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 12px;
+  max-width: calc(100% - 320px);
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.92);
+  box-shadow: 0 5px 18px rgba(23, 33, 29, 0.11);
+  color: #53635b;
+  font-size: 10px;
+  transform: translateX(-50%);
+}
+
+.bill-change-legend[hidden] {
+  display: none;
+}
+
+.bill-change-legend-title {
+  color: var(--green-dark);
+  font-weight: 700;
+}
+
+.bill-change-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.bill-change-legend-swatch {
+  width: 14px;
+  height: 10px;
+  border: 1px solid var(--swatch-stroke);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--swatch-fill) 45%, #fff);
+}
+
+.bill-change-legend-note {
+  color: #6f5212;
+  font-style: italic;
+}
+
 .parcel-popup-count {
   margin: 0 0 6px;
   color: var(--muted);

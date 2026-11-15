@@ -407,6 +407,12 @@ const TAX_CONFIG = {
     "ACCTID IS NOT NULL AND ACCTID NOT IN ('ROW', 'UNK', 'GCE') AND NFMTTLVL > 0 AND EXCLASS IS NULL",
   color: "#9b721e",
   fillColor: "#e5be72",
+  // Same saturation and lightness as the default parcel colors, with blue/red hues for colorblind-friendly contrast.
+  billChangeStyles: {
+    lower: { color: "#1d5c9a", fillColor: "#71abe5", label: "Lower bill" },
+    same: { color: "#5c5c5c", fillColor: "#ababab", label: "No change" },
+    higher: { color: "#9a1d1d", fillColor: "#e57171", label: "Higher bill" },
+  },
   metrics: [
     {
       label: "Land value",
@@ -528,6 +534,28 @@ const elements = {
 
 zoomControl.getContainer().append(elements.mapStatus.closest(".map-status"));
 
+const billChangeLegend = L.DomUtil.create("div", "bill-change-legend", map.getContainer());
+billChangeLegend.hidden = true;
+billChangeLegend.setAttribute("aria-label", "Map legend: change in parcel tax bill");
+billChangeLegend.innerHTML = `
+  <span class="bill-change-legend-title">Bill change</span>
+  ${Object.values(TAX_CONFIG.billChangeStyles).map(({ color, fillColor, label }) => `
+    <span class="bill-change-legend-item">
+      <span class="bill-change-legend-swatch" style="--swatch-stroke: ${color}; --swatch-fill: ${fillColor}"></span>${label}
+    </span>`).join("")}
+  <span class="bill-change-legend-note"></span>`;
+L.DomEvent.disableClickPropagation(billChangeLegend);
+L.DomEvent.disableScrollPropagation(billChangeLegend);
+
+function updateBillChangeLegend() {
+  billChangeLegend.hidden = !taxScenarioModel;
+  const note = billChangeLegend.querySelector(".bill-change-legend-note");
+  note.textContent = map.getZoom() < VECTOR_MIN_ZOOM ? `Zoom to ${VECTOR_MIN_ZOOM}+ to color parcels` : "";
+  note.hidden = !note.textContent;
+}
+
+map.on("zoomend", updateBillChangeLegend);
+
 let parcelLayer = null;
 let geographyLayer = null;
 let geographyFeatures = [];
@@ -631,6 +659,7 @@ function clearParcelResults() {
   removeParcelLoadingMarker();
   latestTaxSummary = null;
   taxScenarioModel = null;
+  updateBillChangeLegend();
   hideParcelLoadProgress();
   elements.underutilizedSelect.disabled = false;
   underutilizedMode = "";
@@ -1463,12 +1492,14 @@ function createParcelMapLayer(geography) {
   const shapeStyle = (feature) => {
     const accounts = feature.properties.accounts;
     const center = geometryCenter(feature.geometry);
+    const style = createParcelStyle(billChangeCategory(accounts));
     return accounts.some((account) => isUnderutilized(account, center))
-      ? underutilizedStyle(createParcelStyle())
-      : createParcelStyle();
+      ? underutilizedStyle(style)
+      : style;
   };
   const orphanStyle = (points) => {
-    const base = { radius: 5, color: TAX_CONFIG.color, weight: 1.5, fill: false };
+    const { color } = createParcelStyle(billChangeCategory(points.map((point) => point.properties || {})));
+    const base = { radius: 5, color, weight: 1.5, fill: false };
     return points.some((point) => isUnderutilized(point.properties || {}, point.geometry.coordinates))
       ? { ...base, color: "#e56b2f", weight: 2.5 }
       : base;
@@ -1970,12 +2001,13 @@ async function loadTaxMetrics(geographyType, geography, signal, onPartial) {
   return summary;
 }
 
-function createParcelStyle() {
+function createParcelStyle(billChange = null) {
+  const colors = TAX_CONFIG.billChangeStyles[billChange] ?? TAX_CONFIG;
   return {
-    color: TAX_CONFIG.color,
+    color: colors.color,
     weight: 1,
     opacity: 0.8,
-    fillColor: TAX_CONFIG.fillColor,
+    fillColor: colors.fillColor,
     fillOpacity: 0.25,
   };
 }
@@ -2752,6 +2784,11 @@ function popupMarkup(properties) {
   const title = displayValue(properties.ADDRESS, address || "Selected parcel");
 
   const taxDetails = taxPopupDetails(properties);
+  const hasChange = Number.isFinite(taxDetails.currentTax) && Number.isFinite(taxDetails.hypotheticalTax);
+  const billChange = hasChange ? taxChangeCategory(taxDetails.hypotheticalTax, taxDetails.currentTax) : null;
+  const changeText = hasChange
+    ? formatTaxChange(taxDetails.hypotheticalTax, taxDetails.currentTax, formatCurrency)
+    : "Not available";
 
   return `
     <div class="parcel-popup">
@@ -2767,6 +2804,7 @@ function popupMarkup(properties) {
         <dt>Applicable tax rate</dt><dd>${escapeHtml(formatTaxRate(taxDetails.currentRate))} <a href="${escapeHtml(TAX_RATE_SOURCE.url)}" target="_blank" rel="noopener">(SDAT ${escapeHtml(TAX_RATE_SOURCE.updated)})</a>${taxDetails.countySource ? ` <a href="${escapeHtml(taxDetails.countySource.url)}" target="_blank" rel="noopener" title="${escapeHtml(taxDetails.countyNote)}">(county add-on rates)</a>` : ""}</dd>
         <dt>Predicted tax bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.currentTax))}</dd>
         <dt>Hypothetical split-rate bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.hypotheticalTax))}</dd>
+        <dt>Change</dt><dd${billChange ? ` class="parcel-popup-change is-${billChange}"` : ""}>${escapeHtml(changeText)}</dd>
       </dl>
     </div>`;
 }
@@ -2966,14 +3004,34 @@ function computeTaxScenario() {
   return { total, byCounty, byJurisdiction };
 }
 
-function formatTaxChange(value, current) {
-  if (!Number.isFinite(value)) return "Enter rates";
+// Ignore differences from rounding default rates to 6 decimal places.
+function taxChangeCategory(value, current) {
   const change = value - current;
-  // Ignore differences from rounding default rates to 6 decimal places.
-  if (Math.abs(change) <= Math.max(1, Math.abs(current) * 1e-6)) return "No change";
+  if (Math.abs(change) <= Math.max(1, Math.abs(current) * 1e-6)) return "same";
+  return change < 0 ? "lower" : "higher";
+}
+
+// Combined bill change for all accounts on a parcel, or null when no scenario applies.
+function billChangeCategory(accounts) {
+  if (!taxScenarioModel || !accounts.length) return null;
+  let current = 0;
+  let hypothetical = 0;
+  for (const account of accounts) {
+    const { currentTax, hypotheticalTax } = taxPopupDetails(account);
+    if (!Number.isFinite(currentTax) || !Number.isFinite(hypotheticalTax)) return null;
+    current += currentTax;
+    hypothetical += hypotheticalTax;
+  }
+  return taxChangeCategory(hypothetical, current);
+}
+
+function formatTaxChange(value, current, formatAmount = formatCompactCurrency) {
+  if (!Number.isFinite(value)) return "Enter rates";
+  if (taxChangeCategory(value, current) === "same") return "No change";
+  const change = value - current;
   const sign = change > 0 ? "+" : "−";
   const percent = current ? ` (${sign}${formatPercent(Math.abs(change / current) * 100)})` : "";
-  return `${sign}${formatCompactCurrency(Math.abs(change))}${percent}`;
+  return `${sign}${formatAmount(Math.abs(change))}${percent}`;
 }
 
 function setScenarioValue(amountElement, changeElement, value, current) {
@@ -2992,6 +3050,8 @@ function updateTaxScenarioResults() {
   );
   taxScenarioModel.rows.forEach((row) => setScenarioValue(row.amount, row.change, row.read(results), row.current));
   refreshOpenParcelPopup();
+  updateBillChangeLegend();
+  parcelLayer?.restyle();
 }
 
 function scheduleTaxScenarioUpdate() {
@@ -3205,6 +3265,7 @@ async function loadParcels() {
   latestTaxSummary = null;
   currentTaxRate = null;
   taxScenarioModel = null;
+  updateBillChangeLegend();
   hideParcelLoadProgress();
   elements.underutilizedSelect.disabled = false;
   elements.taxDownloadControls.hidden = true;
