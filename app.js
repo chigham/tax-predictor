@@ -470,6 +470,10 @@ const elements = {
   parcelLoadProgressLabel: document.querySelector("#parcel-load-progress-label"),
   parcelLoadProgressCount: document.querySelector("#parcel-load-progress-count"),
   parcelLoadProgressBar: document.querySelector("#parcel-load-progress-bar"),
+  plainSummary: document.querySelector("#plain-summary"),
+  plainSummaryText: document.querySelector("#plain-summary-text"),
+  plainSummaryBasis: document.querySelector("#plain-summary-basis"),
+  copyPlainSummary: document.querySelector("#copy-plain-summary"),
   parcelCount: document.querySelector("#parcel-count"),
   analysisMetrics: document.querySelector("#analysis-metrics"),
   taxModelControls: document.querySelector("#tax-model-controls"),
@@ -532,6 +536,10 @@ let underutilizedContext = null;
 let urbanFeaturesPromise = null;
 let parcelLoadingMarker = null;
 let focusCountyChoiceAfterLoad = false;
+let plainSummaryPreset = { ratio: 4 };
+let plainSummaryRequest = null;
+let plainSummaryData = null;
+let plainSummaryCopyText = "";
 
 function setStatus(message, state = "ready") {
   elements.statusMessage.textContent = message;
@@ -615,6 +623,7 @@ function clearParcelResults() {
     openParcelPopup = null;
   }
   removeParcelLoadingMarker();
+  resetPlainSummary();
   latestTaxSummary = null;
   taxScenarioModel = null;
   hideParcelLoadProgress();
@@ -1726,7 +1735,7 @@ function parcelGroupedStatisticsRequest(
   return { url: `${query.url.split("?")[0]}?${params.toString()}`, options: {} };
 }
 
-async function loadCurrentTaxRevenue(geography, signal) {
+async function loadCurrentTaxRevenue(geography, signal, where = null) {
   const query = parcelGroupedStatisticsRequest(geography, [
     { statisticType: "avg", onStatisticField: "NFMTTLVL", outStatisticFieldName: "averageTotal" },
     { statisticType: "count", onStatisticField: "NFMTTLVL", outStatisticFieldName: "totalCount" },
@@ -1735,7 +1744,7 @@ async function loadCurrentTaxRevenue(geography, signal) {
     { statisticType: "count", onStatisticField: "NFMLNDVL", outStatisticFieldName: "landCount" },
     { statisticType: "avg", onStatisticField: "NFMIMPVL", outStatisticFieldName: "averageImprovement" },
     { statisticType: "count", onStatisticField: "NFMIMPVL", outStatisticFieldName: "improvementCount" },
-  ]);
+  ], { where });
   const response = await fetch(query.url, {
     ...query.options,
     signal,
@@ -3084,6 +3093,7 @@ function applyRevenueNeutralLandOnly(model) {
     };
   });
   renderTaxScenario();
+  updatePlainSummaryPreset({ landOnly: true });
   setStatus("Applied revenue-neutral land-only rates (improvements untaxed).", "success");
 }
 
@@ -3114,6 +3124,8 @@ function applyRevenueNeutralRatio() {
     };
   });
   renderTaxScenario();
+  // The summary describes land taxed more than buildings, so it only follows ratios above 1.
+  if (ratio > 1) updatePlainSummaryPreset({ ratio });
   setStatus(`Applied revenue-neutral rates with land taxed at ${ratio}× the improvement rate.`, "success");
 }
 
@@ -3122,6 +3134,293 @@ function resetTaxScenario() {
   taxScenarioModel.rates = defaultTaxScenarioRates(taxScenarioModel);
   renderTaxScenario();
   setStatus("Scenario reset to current rates.", "success");
+}
+
+// Plain-English summary. It always describes a revenue-neutral split (4:1 unless the user
+// applies another preset) with rates set so each county, and each municipality with its own
+// rate, collects the same total as today. Balancing countywide rather than within the
+// selection is what lets a district see whether it would pay more or less than now.
+const HOMEOWNER_PROPERTY_TYPES = ["sfh", "townhouse", "condo", "otherResidential"];
+// Land-rich types that usually carry more of the tax when land is taxed more than buildings.
+const LAND_RICH_TYPE_LABELS = {
+  vacant: "vacant land",
+  commercial: "commercial property",
+  industrial: "industrial property",
+  mixedUse: "mixed-use property",
+  agricultural: "farmland",
+};
+const COMPACT_HOUSING_TYPE_LABELS = {
+  apartments: "apartment buildings",
+  townhouse: "townhouses",
+  condo: "condos",
+};
+// Counties with fewer than this share of the selection's accounts are not named in the summary.
+const PLAIN_SUMMARY_MIN_COUNTY_SHARE = 0.01;
+
+const em = (text) => ({ strong: text });
+
+// Tagged template that returns text segments; values wrapped in em() render in bold.
+function plain(strings, ...values) {
+  return strings
+    .flatMap((text, index) => [text, ...(index < values.length ? [values[index]].flat() : [])])
+    .filter((part) => part !== "");
+}
+
+function plainSegmentsText(parts) {
+  return parts.map((part) => (typeof part === "string" ? part : part.strong)).join("");
+}
+
+function plainList(items) {
+  if (items.length <= 2) return items.join(" and ");
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
+function plainMoney(value) {
+  const amount = Math.abs(value);
+  const short = (number) => Number(number.toFixed(number < 10 ? 1 : 0));
+  if (amount >= 1e9) return `$${short(amount / 1e9)} billion`;
+  if (amount >= 1e6) return `$${short(amount / 1e6)} million`;
+  return formatCurrency(amount);
+}
+
+function plainPercent(fraction) {
+  const value = Math.abs(fraction) * 100;
+  if (value > 99 && value < 100) return "more than 99%";
+  return `${value < 1 ? Number(value.toFixed(1)) : Math.round(value)}%`;
+}
+
+function isWholeCountySelection(geographyType, geography) {
+  return geographyType === "county"
+    || (geographyType === "countyCouncil" && geography.properties?.GEOGRAPHY_LABEL?.endsWith("— At-large"));
+}
+
+function plainGeographyName(geographyType, geography) {
+  const properties = geography.properties || {};
+  const value = String(properties[GEOGRAPHY_CONFIG[geographyType].valueField] ?? "").trim();
+  const districtNumber = value.replace(/^0+(?=\d)/, "");
+  if (geographyType === "county") return countyKeyFromStateName(properties.COUNTY);
+  if (geographyType === "assembly") return `Legislative District ${districtNumber}`;
+  if (geographyType === "congressional") return `Congressional District ${districtNumber}`;
+  if (geographyType === "countyCouncil") {
+    const district = value.split(" — ").slice(1).join(" — ");
+    if (district === "At-large") return properties.COUNTY;
+    return `${properties.COUNTY} ${/^\d/.test(district) ? `District ${district}` : district}`;
+  }
+  return formatMunicipalityName(value);
+}
+
+function plainSummaryRatesFor(reference, preset) {
+  const rates = new Map();
+  reference.forEach((details) => {
+    if (preset.landOnly) {
+      if (details.landValue > 0) {
+        rates.set(details.jurisdiction, { land: details.currentTax / details.landValue, improvement: 0 });
+      }
+      return;
+    }
+    const base = preset.ratio * details.landValue + details.improvementValue;
+    if (base <= 0) return;
+    const improvement = details.currentTax / base;
+    rates.set(details.jurisdiction, { land: improvement * preset.ratio, improvement });
+  });
+  return (details) => rates.get(details.jurisdiction) || null;
+}
+
+function homeownerSentence(homes) {
+  const median = homes.medianChange;
+  const typical = Math.abs(median) < ABOUT_THE_SAME_THRESHOLD
+    ? "stay about the same"
+    : `${median < 0 ? "fall" : "rise"} ${plainPercent(median)}`;
+  if (homes.payingLess >= 0.5) {
+    const savings = homes.averageChange < 0
+      ? plain`, an average savings of ${em(`${plainMoney(homes.averageChange)} a year`)}`
+      : "";
+    return plain`${em(plainPercent(homes.payingLess))} of owner-occupied homes would pay less; the typical homeowner's bill would ${em(typical)}${savings}.`;
+  }
+  if (homes.payingMore < 0.5) {
+    return plain`Among owner-occupied homes, ${em(plainPercent(homes.payingLess))} would pay less and ${em(plainPercent(homes.payingMore))} would pay more; the typical bill would ${em(typical)}.`;
+  }
+  const average = homes.averageChange > 0
+    ? plain` (about ${em(`${plainMoney(homes.averageChange)} a year`)} on average)`
+    : "";
+  const someSave = homes.payingLess >= 0.05;
+  if (Math.abs(median) <= 0.05) {
+    const savers = someSave ? plain`, and ${em(plainPercent(homes.payingLess))} of homeowners would pay less` : "";
+    return plain`For most owner-occupied homes the change would be modest: the typical bill would ${em(typical)}${average}${savers}.`;
+  }
+  const savers = someSave ? plain`, though ${em(plainPercent(homes.payingLess))} of homeowners would pay less` : "";
+  return plain`The typical owner-occupied home would pay ${em(`${plainPercent(median)} more`)}${average}${savers}. A lower land-to-building ratio would soften this.`;
+}
+
+function buildPlainSummary({ cells, reference, geographyType, geography, loadedAt }, preset) {
+  const ratesFor = plainSummaryRatesFor(reference, preset);
+  const priced = cells
+    .map((cell) => ({ ...cell, scenario: cellScenario(cell, ratesFor) }))
+    .filter((cell) => cell.scenario);
+  const all = summarizeCells(priced);
+  if (!all || !(all.currentTax > 0)) return null;
+
+  const summarize = (test) => summarizeCells(priced.filter(test));
+  const relativeChange = (summary) => summary.change / summary.currentTax;
+  const sum = (read) => priced.reduce((total, cell) => total + read(cell), 0);
+  const ratioText = Number(preset.ratio?.toFixed(2));
+  const scenarioPhrase = preset.landOnly
+    ? "taxing land only (not buildings)"
+    : `taxing land at ${ratioText} times the rate of buildings`;
+
+  const countyCounts = new Map();
+  priced.forEach((cell) => countyCounts.set(cell.details.county, (countyCounts.get(cell.details.county) || 0) + cell.count));
+  const counties = [...countyCounts]
+    .filter(([, count]) => count >= all.count * PLAIN_SUMMARY_MIN_COUNTY_SHARE)
+    .map(([county]) => county)
+    .sort();
+  const place = plainGeographyName(geographyType, geography);
+  const sentences = [];
+
+  // 1. Revenue: the whole county stays revenue-neutral; a district sees its share move.
+  if (isWholeCountySelection(geographyType, geography)) {
+    const buildingTaxNow = sum((cell) => cell.improvementValue * cell.details.rate);
+    const buildingTaxAfter = sum((cell) => cell.improvementValue * ratesFor(cell.details).improvement);
+    const buildingClause = preset.landOnly
+      ? plain` while ${em("removing the tax on buildings")} entirely`
+      : buildingTaxNow > 0
+        ? plain` while cutting the tax on buildings by ${em(plainPercent(1 - buildingTaxAfter / buildingTaxNow))}`
+        : "";
+    sentences.push(plain`In ${place}, ${scenarioPhrase} would raise the same ${em(plainMoney(all.currentTax))} in county property tax as today${buildingClause}.`);
+  } else {
+    const shift = relativeChange(all);
+    const single = counties.length === 1;
+    const adopters = single ? counties[0] : `${plainList(counties)} each`;
+    const referencePlace = single ? (counties[0] === "Baltimore City" ? "citywide" : "countywide") : "across those counties";
+    let outcome;
+    if (Math.abs(shift) < ABOUT_THE_SAME_THRESHOLD) {
+      outcome = plain`would pay ${em("about the same")} in total`;
+    } else if (shift < 0) {
+      outcome = plain`would pay ${em(`${plainMoney(all.change)} less`)} in total (${em(`${plainPercent(shift)} lower`)})`;
+    } else {
+      outcome = plain`would contribute ${em(`${plainMoney(all.change)} more`)} in total (${em(`${plainPercent(shift)} higher`)})`;
+    }
+    const referenceDetails = [...reference.values()].filter((details) => counties.includes(details.county));
+    const referenceTotal = referenceDetails.reduce((total, details) => total + details.totalValue, 0);
+    const landShareHere = sum((cell) => cell.landValue) / sum((cell) => cell.totalValue);
+    const landShareThere = referenceDetails.reduce((total, details) => total + details.landValue, 0) / referenceTotal;
+    const landShareGap = landShareHere - landShareThere;
+    const reasonMatches = Math.abs(shift) >= ABOUT_THE_SAME_THRESHOLD
+      && Math.abs(landShareGap) >= 0.01
+      && Math.sign(landShareGap) === Math.sign(shift);
+    const reason = reasonMatches
+      ? `, because land makes up a ${landShareGap > 0 ? "larger" : "smaller"} share of property value here (${plainPercent(landShareHere)}) than ${referencePlace} (${plainPercent(landShareThere)})`
+      : "";
+    sentences.push(plain`If ${adopters} switched to ${scenarioPhrase} while collecting the same total revenue, property owners in ${place} ${outcome}${reason}.`);
+  }
+
+  // 2. Where the tax shifts: toward land held below its potential, away from compact housing.
+  const byType = (labels) => Object.entries(labels)
+    .map(([key, label]) => ({ label, summary: summarize((cell) => cell.propertyType === key) }))
+    .filter(({ summary }) => summary && summary.currentTax > 0);
+  const payers = byType(LAND_RICH_TYPE_LABELS)
+    .filter(({ summary }) => relativeChange(summary) > ABOUT_THE_SAME_THRESHOLD)
+    .sort((a, b) => b.summary.change - a.summary.change)
+    .slice(0, 3);
+  const savers = byType(COMPACT_HOUSING_TYPE_LABELS)
+    .filter(({ summary }) => relativeChange(summary) < -ABOUT_THE_SAME_THRESHOLD);
+  if (payers.length) {
+    const added = payers.reduce((total, { summary }) => total + summary.change, 0);
+    const saverClause = savers.length ? plain`, while ${plainList(savers.map(({ label }) => label))} would pay less` : "";
+    sentences.push(plain`More of the tax would come from ${plainList(payers.map(({ label }) => label))} (${em(`${plainMoney(added)} more a year`)}${payers.length > 1 ? " combined" : ""})${saverClause}, rewarding owners who build on their land rather than leave it underused.`);
+  } else {
+    sentences.push(plain`Because buildings would be taxed less, new homes, additions, and renovations would add less to tax bills than they do today.`);
+  }
+
+  // 3. Owner-occupied homes, stated honestly whether most pay less or more.
+  const homes = summarize((cell) => cell.occupancy === "H" && HOMEOWNER_PROPERTY_TYPES.includes(cell.propertyType));
+  if (homes) sentences.push(homeownerSentence(homes));
+
+  const scenarioName = preset.landOnly ? "land-only tax" : `${ratioText}:1 land-to-building split`;
+  const collectors = counties.length === 1 ? `${counties[0]} collects` : `${plainList(counties)} each collect`;
+  const basis = `Revenue-neutral ${scenarioName}, with rates set so ${collectors} the same total as today. County property tax only; tax credits are not modeled. "Typical" is the median bill change.`;
+  const dataDate = new Date(loadedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return {
+    sentences,
+    basis,
+    copyText: `${sentences.map(plainSegmentsText).join(" ")}\n\n${basis} Source: Parcel Analysis MD, Maryland iMAP parcel data accessed ${dataDate}.`,
+  };
+}
+
+function renderPlainSummary(summary) {
+  elements.plainSummary.classList.remove("is-loading");
+  if (!summary) {
+    elements.plainSummary.hidden = true;
+    return;
+  }
+  elements.plainSummaryText.replaceChildren(...summary.sentences.map((parts, index) => {
+    const paragraph = document.createElement("p");
+    if (index === 0) paragraph.className = "plain-summary__lede";
+    paragraph.append(...parts.map((part) => {
+      if (typeof part === "string") return part;
+      const strong = document.createElement("strong");
+      strong.textContent = part.strong;
+      return strong;
+    }));
+    return paragraph;
+  }));
+  elements.plainSummaryBasis.textContent = summary.basis;
+  plainSummaryCopyText = summary.copyText;
+  elements.copyPlainSummary.disabled = false;
+  elements.plainSummary.hidden = false;
+}
+
+function resetPlainSummary() {
+  plainSummaryRequest?.abort();
+  plainSummaryRequest = null;
+  plainSummaryData = null;
+  plainSummaryCopyText = "";
+  elements.plainSummary.hidden = true;
+  elements.plainSummary.classList.remove("is-loading");
+  elements.plainSummaryText.replaceChildren();
+  elements.plainSummaryBasis.textContent = "";
+  elements.copyPlainSummary.disabled = true;
+}
+
+async function loadPlainSummary(geographyType, geography, taxSummary) {
+  resetPlainSummary();
+  const byJurisdiction = taxSummary.currentTaxByJurisdiction;
+  if (!byJurisdiction?.size) return;
+  const request = new AbortController();
+  plainSummaryRequest = request;
+  const placeholder = document.createElement("p");
+  placeholder.className = "plain-summary__placeholder";
+  placeholder.textContent = "Writing a plain-English summary of who pays more and who pays less…";
+  elements.plainSummaryText.replaceChildren(placeholder);
+  elements.plainSummary.classList.add("is-loading");
+  elements.plainSummary.hidden = false;
+
+  try {
+    const counties = new Set([...byJurisdiction.values()].map((details) => details.county));
+    const codes = Object.keys(COUNTY_BY_JURISDICTION).filter((code) => counties.has(COUNTY_BY_JURISDICTION[code]));
+    const [cells, reference] = await Promise.all([
+      loadTaxBreakdownCells(geography, request.signal),
+      isWholeCountySelection(geographyType, geography)
+        ? byJurisdiction
+        : loadCurrentTaxRevenue(null, request.signal, `JURSCODE IN (${sqlList(codes)})`).then((result) => result.byJurisdiction),
+    ]);
+    if (plainSummaryRequest !== request) return;
+    hideParcelLoadProgress();
+    plainSummaryData = { cells, reference, geographyType, geography, loadedAt: taxSummary.loadedAt };
+    renderPlainSummary(buildPlainSummary(plainSummaryData, plainSummaryPreset));
+  } catch (error) {
+    if (error.name === "AbortError" || plainSummaryRequest !== request) return;
+    hideParcelLoadProgress();
+    console.warn("Could not write the plain-English summary:", error);
+    renderPlainSummary(null);
+  } finally {
+    if (plainSummaryRequest === request) plainSummaryRequest = null;
+  }
+}
+
+function updatePlainSummaryPreset(preset) {
+  plainSummaryPreset = preset;
+  if (plainSummaryData) renderPlainSummary(buildPlainSummary(plainSummaryData, preset));
 }
 
 async function loadParcels() {
@@ -3142,6 +3441,7 @@ async function loadParcels() {
     openParcelPopup = null;
   }
   removeParcelLoadingMarker();
+  resetPlainSummary();
   latestTaxSummary = null;
   currentTaxRate = null;
   taxScenarioModel = null;
@@ -3164,6 +3464,7 @@ async function loadParcels() {
   elements.parcelCount.textContent = "—";
   updateAnalysisMetrics();
   const geographyName = formatGeographyName(geographyAtRequestStart);
+  const geographyType = elements.geographyTypeSelect.value;
   setStatus(`Calculating tax metrics for ${geographyName}…`, "loading");
   updateMapStatus("Loading parcels…");
   showParcelLoadProgress("Calculating tax metrics…", 0, null, true);
@@ -3176,7 +3477,7 @@ async function loadParcels() {
     });
 
     const taxSummary = await loadTaxMetrics(
-      elements.geographyTypeSelect.value,
+      geographyType,
       geographyAtRequestStart,
       request.signal,
       (partial) => {
@@ -3187,7 +3488,7 @@ async function loadParcels() {
 
     currentTaxRate = taxSummary.countyTaxRate;
     taxSummary.loadedAt = new Date().toISOString();
-    taxSummary.geographyTypeLabel = GEOGRAPHY_CONFIG[elements.geographyTypeSelect.value]?.label ?? null;
+    taxSummary.geographyTypeLabel = GEOGRAPHY_CONFIG[geographyType]?.label ?? null;
     latestTaxSummary = taxSummary;
     elements.parcelCount.textContent = taxSummary.parcelCount.toLocaleString();
     updateCurrentTaxCountyResults(taxSummary.currentTaxByJurisdiction);
@@ -3197,6 +3498,7 @@ async function loadParcels() {
     hideParcelLoadProgress();
     updateMapStatus(`${taxSummary.parcelCount.toLocaleString()} taxable accounts in ${geographyName}`);
     setStatus(`${TAX_CONFIG.title} is ready.`, "success");
+    loadPlainSummary(geographyType, geographyAtRequestStart, taxSummary);
     await renderPromise;
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -3493,6 +3795,20 @@ elements.applyNeutralRatio.addEventListener("click", applyRevenueNeutralRatio);
 elements.neutralModeInputs.forEach((input) => input.addEventListener("change", updateNeutralModeControls));
 elements.neutralRatio.addEventListener("input", () => elements.neutralRatio.setCustomValidity(""));
 elements.resetTaxModel.addEventListener("click", resetTaxScenario);
+elements.copyPlainSummary.addEventListener("click", async () => {
+  if (!plainSummaryCopyText) return;
+  try {
+    await navigator.clipboard.writeText(plainSummaryCopyText);
+    elements.copyPlainSummary.textContent = "Copied";
+    setTimeout(() => {
+      elements.copyPlainSummary.textContent = "Copy";
+    }, 2000);
+    setStatus("Summary copied, with its basis and source, ready to paste.", "success");
+  } catch (error) {
+    console.warn("Could not copy the summary:", error);
+    setStatus("Could not copy automatically. Select the summary text and copy it instead.", "error");
+  }
+});
 elements.downloadSummary.addEventListener("click", () => {
   runDownload(
     async (signal) => downloadTextFile(downloadBaseName("summary.txt"), await summaryText(signal), "text/plain;charset=utf-8"),

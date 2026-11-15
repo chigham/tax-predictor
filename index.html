@@ -60,6 +60,8 @@
         <p>Each included point represents one Maryland tax account, including individual condominium units. The analysis uses accounts with positive appraised full value, no exemption class, and a non-placeholder account ID. Maryland iMAP parcel and assessment data are grouped by the selected county, district, or municipality.</p>
         <h3>Comparing tax scenarios</h3>
         <p>Estimated current tax uses the app’s county and municipal rate table. A split-rate scenario applies separate rates to assessed land value and improvements. The revenue-neutral preset chooses rates intended to match the modeled current total for the selected area.</p>
+        <h3>The plain-English summary</h3>
+        <p>The summary above the results describes a revenue-neutral 4:1 land-to-building split, or the last split-rate or land-only preset you apply. Its rates are set so each county, and each municipality with its own rate, collects the same total as today. For a district, that shows whether its property owners would pay more or less within their county. “Typical” means the median bill change. Owner-occupied homes are residential accounts with owner-occupancy code H.</p>
         <div class="methodology-note"><strong>Important limitation</strong><p>These are exploratory estimates. The rate table is a prototype source, and the parcel data and filters are not a complete tax determination. Results are not official bills; confirm rates and assessments with authoritative county and state sources before relying on them.</p></div>
         <p class="methodology-source">Data: <a href="https://imap.maryland.gov/" target="_blank" rel="noopener">Maryland iMAP</a>. See the <a href="README.md#data-service">data notes</a> for source and query details.</p>
       </dialog>
@@ -174,6 +176,14 @@
             <span id="parcel-load-progress-bar"></span>
           </div>
         </div>
+        <section id="plain-summary" class="plain-summary" aria-labelledby="plain-summary-heading" hidden>
+          <div class="plain-summary__header">
+            <p id="plain-summary-heading" class="plain-summary__heading">In plain English</p>
+            <button id="copy-plain-summary" class="plain-summary__copy" type="button" aria-label="Copy summary with its basis and source" disabled>Copy</button>
+          </div>
+          <div id="plain-summary-text" class="plain-summary__text" aria-live="polite"></div>
+          <p id="plain-summary-basis" class="plain-summary__basis"></p>
+        </section>
         <div class="metric-grid" aria-label="Parcel query results">
           <div class="metric-card">
             <span class="metric-label">Parcels loaded (n)</span>
