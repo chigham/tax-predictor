@@ -119,6 +119,16 @@ const OCCUPANCY_GROUPS = [
 const LAND_SHARE_BANDS = 20;
 // Bills that change by less than this fraction either way count as "about the same".
 const ABOUT_THE_SAME_THRESHOLD = 0.01;
+// Every rate in COUNTY_TAX_RATES was checked against this SDAT table.
+const TAX_RATE_SOURCE = {
+  title: "Maryland SDAT, Tax Rates 2026-2027: Tax Table & Homestead Credit Caps",
+  shortTitle: "SDAT 2026–2027 tax rate table",
+  taxYear: "July 1, 2026 – June 30, 2027",
+  updated: "July 2026",
+  url: "https://dat.maryland.gov/SiteAssets/Pages/Tax-Rates/Tax%20Rates%202026-2027%20-%20Tax%20Table%20%26%20Homestead%20Credit%20Caps_July%202026_0726-A.pdf",
+};
+// County and municipal real property tax rates from TAX_RATE_SOURCE.
+// `note` and `source` cite a county document for add-on rates that apply countywide.
 const COUNTY_TAX_RATES = {
   "Allegany County": {"base": 0.00975, "municipalities":{"Barton": 0.009133, "Cumberland": 0.008195, "Frostburg": 0.00861, "Lonaconing": 0.008756, "Luke": 0.008752, "Midland": 0.009133, "Westernport": 0.009133}},  // varies by municipality
   "Anne Arundel County": {"base": 0.00968, "municipalities":{"Annapolis": 0.00577, "Highland Beach": 0.00938}},  // varies by municipality
@@ -135,11 +145,15 @@ const COUNTY_TAX_RATES = {
   "Harford County": {"base": 0.009779, "municipalities":{"Aberdeen": 0.008413, "Bel Air": 0.008413, "Havre de Grace": 0.008413}},  // 0.008413 in municipalities
   "Howard County": {"base": 0.01044, "municipalities":{}},
   "Kent County": {"base": 0.01022, "municipalities":{}},
-  "Montgomery County": {"base": 0.007176, "municipalities":{}},  // 0.6706% (base rate) + 0.047% (MCPS-designated)
+  "Montgomery County": {"base": 0.007176, "municipalities":{},
+    "note": "0.7176% = 0.6706% base rate (SDAT) + 0.047% MCPS-designated rate, applied countywide.",
+    "source": {"title": "Montgomery County 2026 Real Property Tax Rate Schedule", "url": "https://assets.montgomerycountymd.gov/files/2026-06/2026%20Real%20PropertyTax%20Rate%20Schedule.pdf"}},
   "Prince George's County": {"base": 0.01, "municipalities":{"Berwyn Heights": 0.00867, "Bladensburg": 0.00875, "Bowie": 0.00878, "Brentwood": 0.00919, "Capitol Heights": 0.00908, "Cheverly": 0.00902, "College Park": 0.00968, "Colmar Manor": 0.00903, "Cottage City": 0.00929, "District Heights": 0.00923, "Eagle Harbor": 0.00999, "Edmonston": 0.00908, "Fairmount Heights": 0.00937, "Forest Heights": 0.00893, "Glenarden": 0.00892, "Greenbelt": 0.00875, "Hyattsville": 0.00884, "Landover Hills": 0.00907, "Laurel": 0.00867, "Morningside": 0.00909, "Mount Rainier": 0.00879, "New Carrollton": 0.00886, "North Brentwood": 0.0098, "Riverdale Park": 0.00882, "Seat Pleasant": 0.00885, "University Park": 0.00881, "Upper Marlboro": 0.0093}},  // varies by municipality
   "Queen Anne's County": {"base": 0.008, "municipalities":{"Centreville": 0.0067, "Millington": 0.00715}},  // varies in two municipalities
   "Somerset County": {"base": 0.01, "municipalities":{}},
-  "St. Mary's County": {"base": 0.009278, "municipalities":{}},  // 0.8478% (base rate) + 0.056% (fire) + 0.024% (supplemental services)
+  "St. Mary's County": {"base": 0.009278, "municipalities":{},
+    "note": "0.9278% = 0.8478% base rate (SDAT) + 0.056% fire rate + 0.024% supplemental services rate, applied countywide.",
+    "source": {"title": "St. Mary's County Real Estate Tax Rates", "url": "https://www.stmaryscountymd.gov/docs/REALESTATETAXRATES.pdf"}},
   "Talbot County": {"base": 0.00818, "municipalities":{"Easton": 0.00685, "Oxford": 0.007, "Queen Anne": 0.007579, "St. Michaels": 0.00691, "Trappe": 0.0072}},  // varies by municipality
   "Washington County": {"base": 0.00928, "municipalities":{"Boonsboro": 0.00803, "Clear Spring": 0.00803, "Funkstown": 0.00803, "Hagerstown": 0.00803, "Hancock": 0.00803, "Keedysville": 0.00803, "Sharpsburg": 0.00803, "Smithsburg": 0.00803, "Williamsport": 0.00803}},  // 0.00803 in municipalities
   "Wicomico County": {"base": 0.007799, "municipalities":{}},
@@ -1834,6 +1848,42 @@ function groupJurisdictionsByCounty(byJurisdiction) {
     .sort((a, b) => b.currentTax - a.currentTax);
 }
 
+function rateNotes(counties) {
+  return [...counties]
+    .filter((county) => COUNTY_TAX_RATES[county]?.note)
+    .sort()
+    .map((county) => ({ county, ...COUNTY_TAX_RATES[county] }));
+}
+
+function rateNoteText({ county, note, source }) {
+  return `${county}: ${note} Source: ${source.title}, ${source.url}`;
+}
+
+function sourceLink(url, text) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = text;
+  return link;
+}
+
+function rateSourceNote(byJurisdiction) {
+  const note = document.createElement("p");
+  note.className = "rate-source-note";
+  note.append(
+    "Rates from the ",
+    sourceLink(TAX_RATE_SOURCE.url, TAX_RATE_SOURCE.shortTitle),
+    ` (updated ${TAX_RATE_SOURCE.updated}), tax year ${TAX_RATE_SOURCE.taxYear}.`,
+  );
+  rateNotes(new Set([...byJurisdiction.values()].map((details) => details.county))).forEach(({ county, note: text, source }) => {
+    const line = document.createElement("span");
+    line.append(`${county}: ${text} Source: `, sourceLink(source.url, source.title), ".");
+    note.append(line);
+  });
+  return note;
+}
+
 function updateCurrentTaxCountyResults(byJurisdiction) {
   const container = elements.taxCurrentCountyResults;
   resetTaxCountyResults(container);
@@ -1866,6 +1916,7 @@ function updateCurrentTaxCountyResults(byJurisdiction) {
     group.append(taxBreakdownRow("summary", countyRowClass, county.name, county.currentTax), breakdown);
     container.append(group);
   });
+  container.append(rateSourceNote(byJurisdiction));
   container.hidden = false;
 }
 
@@ -2267,6 +2318,7 @@ async function summaryText(signal) {
   field("Geography type", summary.geographyTypeLabel || NOT_AVAILABLE_TEXT);
   field("Parcel data loaded", summary.loadedAt || NOT_AVAILABLE_TEXT);
   field("Report generated", new Date().toISOString());
+  field("Current tax rates", `${TAX_RATE_SOURCE.shortTitle} (updated ${TAX_RATE_SOURCE.updated})`);
   lines.push("", "County real property tax only. Read CAVEATS before citing these figures.");
 
   heading("Scenario settings");
@@ -2345,7 +2397,7 @@ async function summaryText(signal) {
     "Covers county real property tax only. State, municipal, and special district taxes are not included.",
     "Includes taxable accounts only: assessed value above $0 and no exemption class.",
     "Bills are assessed value x rate. Homestead Tax Credit caps, Homeowners' Tax Credits, assessment phase-ins, and other credits are not modeled, so actual bills (especially for long-held owner-occupied homes) can be lower, and the change for those owners can differ.",
-    "County and municipal rates are the rates configured in this tool. Check them against current published rates before citing results.",
+    `Current rates are the county and municipal real property tax rates in the ${TAX_RATE_SOURCE.title} (updated ${TAX_RATE_SOURCE.updated}; tax year ${TAX_RATE_SOURCE.taxYear}). See SOURCE.`,
     "Pay less / about the same / pay more shares and median changes are estimated from parcel counts in 5-point land-share bands. Tax totals, changes, shares of tax, and averages are exact sums.",
   ].forEach((text) => lines.push(`- ${text}`));
 
@@ -2368,6 +2420,8 @@ async function summaryText(signal) {
   heading("Source");
   lines.push(`Maryland iMAP parcel points (one per tax account): ${PARCEL_POINTS_LAYER_URL}`);
   lines.push(`Base filter: ${TAX_CONFIG.where}`);
+  lines.push(`Current tax rates: ${TAX_RATE_SOURCE.title}, updated ${TAX_RATE_SOURCE.updated}: ${TAX_RATE_SOURCE.url}`);
+  rateNotes(summary.currentTaxByCounty?.keys() || []).forEach((entry) => lines.push(`- ${rateNoteText(entry)}`));
 
   return `${lines.join("\r\n")}\r\n`;
 }
@@ -2471,7 +2525,8 @@ Columns:
 - CONGRESSIONAL_DISTRICT: U.S. congressional district containing the account point.
 - COUNTY_COUNCIL_DISTRICT: county council or commissioner district containing the account point.
   District columns are blank when the point falls outside every boundary or a boundary service could not be loaded.
-- APPLICABLE_TAX_RATE_PERCENT: current county rate, or the municipal rate where it differs.
+- APPLICABLE_TAX_RATE_PERCENT: current county rate, or the municipal rate where it differs, from the ${TAX_RATE_SOURCE.shortTitle} (updated ${TAX_RATE_SOURCE.updated}).
+${rateNotes(Object.keys(COUNTY_TAX_RATES)).map((entry) => `  ${rateNoteText(entry)}`).join("\n")}
 - PREDICTED_TAX_BILL: NFMTTLVL x applicable rate.
 - SPLIT_LAND_RATE_PERCENT / SPLIT_IMPROVEMENT_RATE_PERCENT: scenario rates for the account's tax jurisdiction at export time.
 - HYPOTHETICAL_SPLIT_RATE_BILL: land assessment x split land rate + improvement assessment x split improvement rate.
@@ -2485,6 +2540,8 @@ Columns:
 - UNDERUTILIZED_ABOVE_MEDIAN_SFH_LAND_RATIO: 1 when a non-SFH account's land-to-total assessment ratio is greater than the median for qualifying SFH accounts in the selection.
 
 Source: Maryland iMAP parcel points: ${PARCEL_POINTS_LAYER_URL}. Accessed ${accessed}.
+Current tax rates: ${TAX_RATE_SOURCE.title}, updated ${TAX_RATE_SOURCE.updated}, tax year ${TAX_RATE_SOURCE.taxYear}: ${TAX_RATE_SOURCE.url}
+${rateNotes(Object.keys(COUNTY_TAX_RATES)).map(({ county, source }) => `${county} add-on rates: ${source.title}: ${source.url}`).join("\n")}
 `;
 }
 
@@ -2663,7 +2720,8 @@ function taxPopupDetails(properties) {
   const currentTax = Number.isFinite(totalValue) && Number.isFinite(currentRate)
     ? totalValue * currentRate
     : null;
-  const scenarioRates = taxScenarioModel ? scenarioRatesFor(taxJurisdictionDetails(properties)) : null;
+  const details = taxJurisdictionDetails(properties);
+  const scenarioRates = taxScenarioModel ? scenarioRatesFor(details) : null;
   const hypotheticalTax = !taxScenarioModel
     ? currentTax
     : scenarioRates
@@ -2675,6 +2733,8 @@ function taxPopupDetails(properties) {
     currentRate,
     currentTax,
     hypotheticalTax,
+    countyNote: COUNTY_TAX_RATES[details.county]?.note ?? null,
+    countySource: COUNTY_TAX_RATES[details.county]?.source ?? null,
   };
 }
 
@@ -2704,7 +2764,7 @@ function popupMarkup(properties) {
         <dt>Improvement assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMIMPVL))} ${properties.NFMTTLVL ? `(${((properties.NFMIMPVL / properties.NFMTTLVL) * 100).toFixed(0)}%)` : ""}</dd>
         <dt>Total assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMTTLVL))} ${properties.NFMTTLVL ? `(100%)` : ""}</dd>
         <dt>Zone</dt><dd>${escapeHtml(displayValue(properties.ZONING))}</dd>
-        <dt>Applicable tax rate</dt><dd>${escapeHtml(formatTaxRate(taxDetails.currentRate))}</dd>
+        <dt>Applicable tax rate</dt><dd>${escapeHtml(formatTaxRate(taxDetails.currentRate))} <a href="${escapeHtml(TAX_RATE_SOURCE.url)}" target="_blank" rel="noopener">(SDAT ${escapeHtml(TAX_RATE_SOURCE.updated)})</a>${taxDetails.countySource ? ` <a href="${escapeHtml(taxDetails.countySource.url)}" target="_blank" rel="noopener" title="${escapeHtml(taxDetails.countyNote)}">(county add-on rates)</a>` : ""}</dd>
         <dt>Predicted tax bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.currentTax))}</dd>
         <dt>Hypothetical split-rate bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.hypotheticalTax))}</dd>
       </dl>

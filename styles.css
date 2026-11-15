@@ -1200,6 +1200,25 @@ h2 {
   margin-top: 12px;
 }
 
+.rate-source-note {
+  margin: 8px 0 0;
+  padding-top: 7px;
+  border-top: 1px solid rgba(23, 33, 29, 0.1);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.rate-source-note a {
+  color: var(--green-dark);
+  font-weight: 700;
+}
+
+.rate-source-note span {
+  display: block;
+  margin-top: 3px;
+}
+
 .tax-model-breakdown-heading {
   margin: 0 0 9px;
   padding: 0 0 7px;
