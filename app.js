@@ -6,7 +6,7 @@ const STATE_ZOOM = 8;
 const VECTOR_MIN_ZOOM = 14;
 const MAX_PARCELS_PER_REQUEST = 1000;
 const PARCEL_OUT_FIELDS =
-  "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN,DESCBLDG";
+  "OBJECTID,ACCTID,ADDRESS,STRTNUM,STRTDIR,STRTNAM,STRTTYP,STRTSFX,STRTUNT,CITY,ZIPCODE,DESCLU,LU,ACRES,SQFTSTRC,YEARBLT,NFMTTLVL,NFMLNDVL,NFMIMPVL,ZONING,BLDG_UNITS,OOI,JURSCODE,TOWNCODE,DESCTOWN,DESCBLDG,FCMACODE";
 const PARCEL_POINTS_LAYER_URL =
   "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0";
 // Shapes carry only one account's attributes, so they are not filtered by value, exemption, or town.
@@ -28,6 +28,25 @@ const COMMERCIAL_RELATED_LAND_USES = [
 const sqlList = (values) => values.map((value) => `'${value}'`).join(", ");
 const NOT_AGRICULTURAL_WHERE = `(LU IS NULL OR LU NOT IN (${sqlList(AGRICULTURAL_LAND_USES)}))`;
 const IMPROVED_WHERE = `${NOT_AGRICULTURAL_WHERE} AND NFMIMPVL > 0`;
+const GEOMETRY_SERVICE_URL = "https://mdgeodata.md.gov/imap/rest/services/Utilities/Geometry/GeometryServer";
+// Advanced setting: which accounts get the scenario's split rates. All other accounts keep their current rate.
+// Farmland is identified by SDAT land use, not zoning: zoning codes differ by county, and Maryland
+// already assesses farmland by its agricultural use.
+const SPLIT_RATE_COVERAGE = {
+  all: {
+    label: "Everywhere",
+    description: "Split rates apply to every taxable account in the selection.",
+  },
+  urban: {
+    label: "Urban areas only",
+    description: "Split rates apply only to accounts inside a 2020 Census urban area (at least 2,000 housing units or 5,000 people). Accounts outside urban areas keep their current rate.",
+  },
+  "exclude-farm-forest": {
+    label: "Excluding farm, marsh, and managed forest land",
+    description: "Accounts with Agricultural or Marsh Land use, or woodland under a Forest Conservation Management Agreement, keep their current rate. Split rates apply to all other accounts. Land use is used instead of zoning because zoning codes differ by county and Maryland already assesses farmland by its use.",
+    where: `${NOT_AGRICULTURAL_WHERE} AND FCMACODE IS NULL`,
+  },
+};
 // Report property types. Each account belongs to exactly one type: the first whose rule matches.
 // `where` (server statistics) and `matches` (parcel CSV) must describe the same rule.
 const PROPERTY_TYPES = [
@@ -507,6 +526,9 @@ const elements = {
   hypotheticalTaxDelta: document.querySelector("#hypothetical-tax-delta"),
   taxCurrentCountyResults: document.querySelector("#tax-current-county-results"),
   taxModelCountyResults: document.querySelector("#tax-model-county-results"),
+  coverageSelect: document.querySelector("#coverage-select"),
+  coverageNote: document.querySelector("#coverage-note"),
+  advancedSettingsState: document.querySelector("#advanced-settings-state"),
   taxDownloadControls: document.querySelector("#tax-download-controls"),
   downloadSummary: document.querySelector("#download-summary"),
   downloadParcels: document.querySelector("#download-parcels"),
@@ -572,6 +594,11 @@ let underutilizedMode = "";
 let underutilizedUpdateId = 0;
 let underutilizedContext = null;
 let urbanFeaturesPromise = null;
+let urbanPointTesters = null;
+let coverageRequest = null;
+// Account point coordinates and urban-area membership, keyed by the account's properties object.
+const accountPoints = new WeakMap();
+const urbanAccountCache = new WeakMap();
 let parcelLoadingMarker = null;
 let focusCountyChoiceAfterLoad = false;
 
@@ -645,6 +672,10 @@ function clearParcelResults() {
   if (downloadRequest) {
     downloadRequest.abort();
     downloadRequest = null;
+  }
+  if (coverageRequest) {
+    coverageRequest.abort();
+    coverageRequest = null;
   }
   underutilizedUpdateId += 1;
   underutilizedContext = null;
@@ -1389,6 +1420,9 @@ async function loadAnalysisPoints(geography, spatialFilter, signal) {
     outSR: "4326",
   }, signal, 2000);
   const pointFeatures = features.filter((feature) => feature.geometry?.type === "Point");
+  pointFeatures.forEach((feature) => {
+    if (feature.properties) accountPoints.set(feature.properties, feature.geometry.coordinates);
+  });
   if (!geography || geographyAttributeFilter(geography)) return pointFeatures;
   const contains = createPointInGeometryTester(geography.geometry);
   return pointFeatures.filter((feature) => contains(feature.geometry.coordinates));
@@ -1752,7 +1786,7 @@ async function loadSfhBenchmarks(geography, signal) {
 function parcelGroupedStatisticsRequest(
   geography,
   statistics,
-  { where = null, groupBy = "JURSCODE,TOWNCODE,DESCTOWN" } = {},
+  { where = null, groupBy = "JURSCODE,TOWNCODE,DESCTOWN", coverage = null } = {},
 ) {
   const query = buildParcelQuery(geography);
   const params = query.options.body
@@ -1763,6 +1797,14 @@ function parcelGroupedStatisticsRequest(
   params.delete("resultRecordCount");
   params.set("returnGeometry", "false");
   if (where) params.set("where", `${params.get("where")} AND (${where})`);
+  if (coverage?.where) params.set("where", `${params.get("where")} AND (${coverage.where})`);
+  // An urban coverage geometry already lies inside the selected geography, so it replaces the geography's.
+  if (coverage?.geometry) {
+    params.set("geometry", JSON.stringify(coverage.geometry));
+    params.set("geometryType", "esriGeometryPolygon");
+    params.set("inSR", "4326");
+    params.set("spatialRel", "esriSpatialRelIntersects");
+  }
   params.set("outFields", groupBy);
   params.set("groupByFieldsForStatistics", groupBy);
   params.set("outStatistics", JSON.stringify(statistics));
@@ -1771,7 +1813,7 @@ function parcelGroupedStatisticsRequest(
   return { url: `${query.url.split("?")[0]}?${params.toString()}`, options: {} };
 }
 
-async function loadCurrentTaxRevenue(geography, signal) {
+async function loadCurrentTaxRevenue(geography, signal, coverage = null) {
   const query = parcelGroupedStatisticsRequest(geography, [
     { statisticType: "avg", onStatisticField: "NFMTTLVL", outStatisticFieldName: "averageTotal" },
     { statisticType: "count", onStatisticField: "NFMTTLVL", outStatisticFieldName: "totalCount" },
@@ -1780,7 +1822,7 @@ async function loadCurrentTaxRevenue(geography, signal) {
     { statisticType: "count", onStatisticField: "NFMLNDVL", outStatisticFieldName: "landCount" },
     { statisticType: "avg", onStatisticField: "NFMIMPVL", outStatisticFieldName: "averageImprovement" },
     { statisticType: "count", onStatisticField: "NFMIMPVL", outStatisticFieldName: "improvementCount" },
-  ]);
+  ], { coverage });
   const response = await fetch(query.url, {
     ...query.options,
     signal,
@@ -2055,9 +2097,7 @@ function scenarioSnapshot() {
   const unitPairs = revenueNeutralUnits(model);
   const units = unitPairs.map(([key, unit]) => {
     const entry = state.rates[state.scope][key];
-    const jurisdictions = unit.counties
-      ? unit.counties.flatMap((county) => county.jurisdictions)
-      : unit.jurisdictions || [unit];
+    const jurisdictions = unitJurisdictions(unit);
     const restOfCounty = state.scope === "jurisdiction" && !unit.municipality
       && unitPairs.some(([, other]) => other.municipality && other.county === unit.county);
     return {
@@ -2124,6 +2164,7 @@ function breakdownCell(propertyType, attributes) {
   const share = (value) => (count ? (Number(value) || 0) / count : 0);
   return {
     propertyType: propertyType.key,
+    groupKey: [attributes.JURSCODE, attributes.TOWNCODE, attributes.DESCTOWN, attributes.OOI].join("|"),
     occupancy: occupancyGroupFor(attributes.OOI).key,
     details: taxJurisdictionDetails(attributes),
     count,
@@ -2136,33 +2177,52 @@ function breakdownCell(propertyType, attributes) {
 }
 
 // One cell per property type × tax jurisdiction × occupancy code.
-async function loadTaxBreakdownCells(geography, signal) {
+// With a coverage filter, each cell is split into the accounts that get split rates and an
+// `excluded` remainder (all accounts minus covered ones) that keeps current rates.
+async function loadTaxBreakdownCells(geography, signal, coverage = null) {
   const statistics = landShareStatistics();
   const message = "Calculating who pays more and who pays less…";
+  const filters = coverage && !coverage.empty ? [null, coverage] : [null];
+  const total = PROPERTY_TYPES.length * filters.length;
   let completed = 0;
-  showParcelLoadProgress(message, completed, PROPERTY_TYPES.length);
-  const groups = await Promise.all(PROPERTY_TYPES.map(async (propertyType) => {
-    const query = parcelGroupedStatisticsRequest(geography, statistics, {
-      where: propertyType.where,
-      groupBy: "JURSCODE,TOWNCODE,DESCTOWN,OOI",
+  showParcelLoadProgress(message, completed, total);
+  const [allCells, coveredCells = []] = await Promise.all(filters.map(async (filter) => (await Promise.all(
+    PROPERTY_TYPES.map(async (propertyType) => {
+      const query = parcelGroupedStatisticsRequest(geography, statistics, {
+        where: propertyType.where,
+        groupBy: "JURSCODE,TOWNCODE,DESCTOWN,OOI",
+        coverage: filter,
+      });
+      const response = await fetch(query.url, { ...query.options, signal, headers: { Accept: "application/json" } });
+      const payload = await response.json();
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
+      }
+      completed += 1;
+      showParcelLoadProgress(message, completed, total);
+      return (payload.features || []).map(({ attributes = {} }) => breakdownCell(propertyType, attributes));
+    }),
+  )).flat().filter((cell) => cell.count > 0)));
+  if (!coverage) return allCells;
+
+  const cellKey = (cell) => `${cell.propertyType}|${cell.groupKey}`;
+  const coveredByKey = new Map(coveredCells.map((cell) => [cellKey(cell), cell]));
+  return allCells.flatMap((cell) => {
+    const covered = coveredByKey.get(cellKey(cell));
+    const remainder = { ...cell, excluded: true };
+    ["count", "totalValue", "landValue", "improvementValue"].forEach((field) => {
+      remainder[field] = cell[field] - (covered?.[field] ?? 0);
     });
-    const response = await fetch(query.url, { ...query.options, signal, headers: { Accept: "application/json" } });
-    const payload = await response.json();
-    if (!response.ok || payload.error) {
-      throw new Error(payload.error?.message || `Parcel service returned ${response.status}.`);
-    }
-    completed += 1;
-    showParcelLoadProgress(message, completed, PROPERTY_TYPES.length);
-    return (payload.features || []).map(({ attributes = {} }) => breakdownCell(propertyType, attributes));
-  }));
-  return groups.flat().filter((cell) => cell.count > 0);
+    return [covered, remainder].filter((part) => part && part.count > 0);
+  });
 }
 
 // Within a tax jurisdiction, a bill's fractional change is base + slope × land share.
 function cellScenario(cell, ratesFor) {
-  const rates = ratesFor(cell.details);
   const currentRate = cell.details.rate;
-  if (!rates || !Number.isFinite(currentRate) || currentRate <= 0) return null;
+  if (!Number.isFinite(currentRate) || currentRate <= 0) return null;
+  const rates = cell.excluded ? { land: currentRate, improvement: currentRate } : ratesFor(cell.details);
+  if (!rates) return null;
   return {
     currentTax: cell.totalValue * currentRate,
     hypotheticalTax: cell.landValue * rates.land + cell.improvementValue * rates.improvement,
@@ -2332,7 +2392,7 @@ async function summaryText(signal) {
   const scenarioComplete = Boolean(scenario && !scenario.missing.length);
   let cells = [];
   if (scenarioComplete) {
-    cells = (await loadTaxBreakdownCells(selectedGeography, signal)).map((cell) => ({
+    cells = (await loadTaxBreakdownCells(selectedGeography, signal, summary.coverage?.filter)).map((cell) => ({
       ...cell,
       scenario: cellScenario(cell, scenario.ratesFor),
     }));
@@ -2358,6 +2418,10 @@ async function summaryText(signal) {
     lines.push("No split-rate scenario is available for this selection.");
   } else {
     field("Rate settings", scenario.scopeLabel);
+    field("Split rates apply", SPLIT_RATE_COVERAGE[activeCoverageMode()].label);
+    if (activeCoverageMode() !== "all") {
+      lines.push("", SPLIT_RATE_COVERAGE[activeCoverageMode()].description, coverageCountText());
+    }
     lines.push("", ...textTable(
       ["Applies to", "Current rate", "Land rate", "Improvement rate", "Land : improvement"],
       scenario.units.map((unit) => [
@@ -2436,7 +2500,7 @@ async function summaryText(signal) {
   heading("Definitions");
   [
     "Current bill: assessed value x current rate.",
-    "Hypothetical bill: land value x land rate + improvement value x improvement rate, using the rates for the account's tax jurisdiction.",
+    "Hypothetical bill: land value x land rate + improvement value x improvement rate, using the rates for the account's tax jurisdiction. Accounts the split rates do not apply to (see Split rates apply under SCENARIO SETTINGS) keep their current bill.",
     "Change / Change %: hypothetical minus current tax, in dollars and as a percent of current tax.",
     "Share now / Share after: the group's share of all current / hypothetical tax in the selection.",
     `Pay less / Pay more: the bill falls / rises by more than ${formatPercent(ABOUT_THE_SAME_THRESHOLD * 100)}. About the same: within ${formatPercent(ABOUT_THE_SAME_THRESHOLD * 100)} either way.`,
@@ -2516,7 +2580,7 @@ Tax figures are county real property tax only. Homestead and Homeowners' tax cre
 SUMMARY STATISTICS (TXT)
 Plain-text report with these sections:
 - Header: geography, geography type, when parcel data was loaded, and when the report was generated.
-- Scenario settings: the rate-setting mode and, for each editable row, current rate, land rate, improvement rate, and land : improvement ratio. Hypothetical sections are omitted when any rate is not entered.
+- Scenario settings: the rate-setting mode, where split rates apply (Advanced setting), and, for each editable row, current rate, land rate, improvement rate, and land : improvement ratio. Hypothetical sections are omitted when any rate is not entered.
 - Headline: current and hypothetical county tax, the change, the share of accounts paying less, about the same, and more, and results for owner-occupied single-family homes.
 - Key metrics: taxable accounts, land and assessed value totals, land share, and SFH benchmark values.
 - Who pays more and who pays less: by property type, by owner occupancy, and by place (county, then municipalities with a distinct rate and the rest of the county). For each group:
@@ -2535,6 +2599,9 @@ Owner occupancy (SDAT owner-occupancy code, OOI):
 - N: not owner-occupied.
 - D: reported separately; its meaning is not documented here.
 - Not reported: blank code.
+
+Where split rates apply (Advanced setting; accounts not covered keep their current rate):
+${Object.values(SPLIT_RATE_COVERAGE).map((option) => `- ${option.label}: ${option.description}`).join("\n")}
 
 SFH benchmarks:
 - Qualifying SFH parcel count: accounts with LU = R, SQFTSTRC > 0, and DESCBLDG one of ${SFH_BUILDING_TYPES.join(", ")}. Row/townhouses, condos, and mobile homes are excluded.
@@ -2560,7 +2627,8 @@ Columns:
 - APPLICABLE_TAX_RATE_PERCENT: current county rate, or the municipal rate where it differs, from the ${TAX_RATE_SOURCE.shortTitle} (updated ${TAX_RATE_SOURCE.updated}).
 ${rateNotes(Object.keys(COUNTY_TAX_RATES)).map((entry) => `  ${rateNoteText(entry)}`).join("\n")}
 - PREDICTED_TAX_BILL: NFMTTLVL x applicable rate.
-- SPLIT_LAND_RATE_PERCENT / SPLIT_IMPROVEMENT_RATE_PERCENT: scenario rates for the account's tax jurisdiction at export time.
+- SPLIT_RATES_APPLY: 1 when the Advanced "Where split rates apply" setting covers the account at export time; 0 when the account keeps its current rate.
+- SPLIT_LAND_RATE_PERCENT / SPLIT_IMPROVEMENT_RATE_PERCENT: scenario rates for the account's tax jurisdiction at export time, or the applicable rate for both when SPLIT_RATES_APPLY is 0.
 - HYPOTHETICAL_SPLIT_RATE_BILL: land assessment x split land rate + improvement assessment x split improvement rate.
 - BILL_CHANGE: HYPOTHETICAL_SPLIT_RATE_BILL - PREDICTED_TAX_BILL.
 - BILL_CHANGE_PERCENT: BILL_CHANGE as a percent of PREDICTED_TAX_BILL.
@@ -2592,6 +2660,176 @@ function ensureUrbanFeatures() {
       });
   }
   return urbanFeaturesPromise;
+}
+
+async function ensureUrbanPointTesters() {
+  const features = await ensureUrbanFeatures();
+  urbanPointTesters ??= features
+    .filter((feature) => feature.geometry)
+    .map((feature) => createPointInGeometryTester(feature.geometry));
+  return urbanPointTesters;
+}
+
+function activeCoverageMode() {
+  return latestTaxSummary?.coverage?.mode ?? "all";
+}
+
+// Mirrors the "exclude-farm-forest" coverage `where` for per-account checks.
+function isFarmOrForestLand(properties) {
+  return AGRICULTURAL_LAND_USES.includes(String(properties.LU || "").trim().toUpperCase())
+    || (properties.FCMACODE !== null && properties.FCMACODE !== undefined);
+}
+
+// Whether the scenario's split rates apply to an account under the active coverage setting.
+function splitRatesApply(properties, point = accountPoints.get(properties)) {
+  const mode = activeCoverageMode();
+  if (mode === "exclude-farm-forest") return !isFarmOrForestLand(properties);
+  if (mode !== "urban") return true;
+  if (!point || !urbanPointTesters) return false;
+  if (!urbanAccountCache.has(properties)) {
+    urbanAccountCache.set(properties, urbanPointTesters.some((contains) => contains(point)));
+  }
+  return urbanAccountCache.get(properties);
+}
+
+function polygonList(geometry) {
+  return geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+}
+
+function pointsBounds(points) {
+  return points.reduce(
+    ([minX, minY, maxX, maxY], [x, y]) => [Math.min(minX, x), Math.min(minY, y), Math.max(maxX, x), Math.max(maxY, y)],
+    [Infinity, Infinity, -Infinity, -Infinity],
+  );
+}
+
+// Esri JSON rings (outer rings clockwise, holes counterclockwise), rounded to about 0.1 m.
+function esriRings(polygons) {
+  return polygons.flatMap((polygon) => polygon.map((ring, index) => {
+    let area = 0;
+    for (let point = 0; point < ring.length - 1; point += 1) {
+      area += ring[point][0] * ring[point + 1][1] - ring[point + 1][0] * ring[point][1];
+    }
+    const oriented = (area < 0) === (index === 0) ? ring : [...ring].reverse();
+    return oriented.map(([x, y]) => [Number(x.toFixed(6)), Number(y.toFixed(6))]);
+  }));
+}
+
+// Area of the selection inside urban areas, or null when none of it is urban.
+// The iMAP geometry service clips the urban areas to the selection, which keeps query geometries small.
+async function urbanCoverageGeometry(geography, signal) {
+  const features = await ensureUrbanFeatures();
+  const geographyPolygons = polygonList(geography.geometry);
+  const [minX, minY, maxX, maxY] = pointsBounds(geographyPolygons.flatMap((polygon) => polygon[0]));
+  const urbanPolygons = features
+    .filter((feature) => feature.geometry)
+    .flatMap((feature) => polygonList(feature.geometry))
+    .filter((polygon) => {
+      const [urbanMinX, urbanMinY, urbanMaxX, urbanMaxY] = pointsBounds(polygon[0]);
+      return urbanMinX <= maxX && urbanMaxX >= minX && urbanMinY <= maxY && urbanMaxY >= minY;
+    });
+  if (!urbanPolygons.length) return null;
+
+  const response = await fetch(`${GEOMETRY_SERVICE_URL}/intersect`, {
+    method: "POST",
+    body: new URLSearchParams({
+      sr: "4326",
+      geometries: JSON.stringify({
+        geometryType: "esriGeometryPolygon",
+        geometries: urbanPolygons.map((polygon) => ({ rings: esriRings([polygon]) })),
+      }),
+      geometry: JSON.stringify({
+        geometryType: "esriGeometryPolygon",
+        geometry: { rings: esriRings(geographyPolygons) },
+      }),
+      f: "json",
+    }),
+    signal,
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error?.message || `Geometry service returned ${response.status}.`);
+  }
+  const rings = (payload.geometries || []).flatMap((geometry) => geometry.rings || []);
+  return rings.length ? { rings, spatialReference: { wkid: 4326 } } : null;
+}
+
+// Coverage filter and per-jurisdiction totals for the accounts that get split rates.
+// `byJurisdiction` is null when split rates apply everywhere.
+async function loadSplitRateCoverage(mode, geography, signal) {
+  let filter;
+  if (mode === "urban") {
+    await ensureUrbanPointTesters();
+    const geometry = await urbanCoverageGeometry(geography, signal);
+    if (!geometry) return { mode, filter: { empty: true }, byJurisdiction: new Map() };
+    filter = { geometry };
+  } else if (SPLIT_RATE_COVERAGE[mode]?.where) {
+    filter = { where: SPLIT_RATE_COVERAGE[mode].where };
+  } else {
+    return { mode: "all", filter: null, byJurisdiction: null };
+  }
+  const { byJurisdiction } = await loadCurrentTaxRevenue(geography, signal, filter);
+  return { mode, filter, byJurisdiction };
+}
+
+function setSplitRateCoverage(summary, { mode, filter, byJurisdiction }) {
+  summary.coverage = { mode, filter };
+  summary.currentTaxByJurisdiction.forEach((details, jurisdiction) => {
+    if (!byJurisdiction) {
+      delete details.covered;
+      return;
+    }
+    details.covered = byJurisdiction.get(jurisdiction)
+      ?? { parcelCount: 0, totalValue: 0, landValue: 0, improvementValue: 0, currentTax: 0 };
+  });
+}
+
+function coverageCountText() {
+  const jurisdictions = [...(latestTaxSummary?.currentTaxByJurisdiction?.values() || [])];
+  const totals = coveredTotals(jurisdictions);
+  const parcelCount = jurisdictions.reduce((total, details) => total + details.parcelCount, 0);
+  const currentTax = jurisdictions.reduce((total, details) => total + details.currentTax, 0);
+  return `In this selection, split rates apply to ${formatCountText(totals.parcelCount)} of ${formatCountText(parcelCount)} accounts (${formatShare(currentTax ? totals.currentTax / currentTax : Number.NaN)} of current tax). The rest keep their current rate.`;
+}
+
+function updateCoverageNote() {
+  const mode = activeCoverageMode();
+  elements.coverageSelect.value = mode;
+  elements.advancedSettingsState.textContent = mode === "all" ? "" : SPLIT_RATE_COVERAGE[mode].label;
+  elements.coverageNote.textContent = mode === "all"
+    ? SPLIT_RATE_COVERAGE.all.description
+    : `${SPLIT_RATE_COVERAGE[mode].description} ${coverageCountText()}`;
+}
+
+async function applySplitRateCoverage() {
+  const summary = latestTaxSummary;
+  if (!summary || !taxScenarioModel) return;
+  const mode = elements.coverageSelect.value;
+  if (coverageRequest) coverageRequest.abort();
+  const request = new AbortController();
+  coverageRequest = request;
+  setStatus("Finding the accounts split rates apply to…", "loading");
+  try {
+    const coverage = await loadSplitRateCoverage(mode, selectedGeography, request.signal);
+    if (coverageRequest !== request || latestTaxSummary !== summary) return;
+    setSplitRateCoverage(summary, coverage);
+    updateCoverageNote();
+    updateTaxScenarioResults();
+    setStatus(
+      mode === "all"
+        ? "Split rates now apply everywhere. Click Apply to rebalance revenue-neutral rates."
+        : `Split rates setting: ${SPLIT_RATE_COVERAGE[mode].label}. Click Apply to rebalance revenue-neutral rates.`,
+      "success",
+    );
+  } catch (error) {
+    if (error.name === "AbortError" || coverageRequest !== request) return;
+    console.error(error);
+    updateCoverageNote();
+    setStatus(`Could not change where split rates apply. ${error.message}`, "error");
+  } finally {
+    if (coverageRequest === request) coverageRequest = null;
+  }
 }
 
 async function loadTaxRecordsForDownload(signal) {
@@ -2649,7 +2887,7 @@ async function detailedParcelCsv(signal) {
     "NFMLNDVL", "NFMIMPVL", "NFMTTLVL", "ZONING", "BLDG_UNITS", "OOI", "OWNER_OCCUPANCY",
     "JURSCODE", "TOWNCODE", "DESCTOWN", "COUNTY", "TAX_MUNICIPALITY",
     "LEGISLATIVE_DISTRICT", "CONGRESSIONAL_DISTRICT", "COUNTY_COUNCIL_DISTRICT",
-    "APPLICABLE_TAX_RATE_PERCENT", "PREDICTED_TAX_BILL", "SPLIT_LAND_RATE_PERCENT", "SPLIT_IMPROVEMENT_RATE_PERCENT",
+    "APPLICABLE_TAX_RATE_PERCENT", "PREDICTED_TAX_BILL", "SPLIT_RATES_APPLY", "SPLIT_LAND_RATE_PERCENT", "SPLIT_IMPROVEMENT_RATE_PERCENT",
     "HYPOTHETICAL_SPLIT_RATE_BILL", "BILL_CHANGE", "BILL_CHANGE_PERCENT",
     "UNDERUTILIZED_VACANT", "UNDERUTILIZED_LAND_MAJORITY",
     "UNDERUTILIZED_HIGH_VALUE_URBAN", "UNDERUTILIZED_ABOVE_MEAN_SFH_LAND_RATIO",
@@ -2674,7 +2912,10 @@ async function detailedParcelCsv(signal) {
     const details = taxJurisdictionDetails(properties);
     const actualRate = details.rate;
     const predictedTax = Number.isFinite(total) && Number.isFinite(actualRate) ? total * actualRate : null;
-    const rates = scenario && Number.isFinite(actualRate) ? scenario.ratesFor(details) : null;
+    const splitRates = splitRatesApply(properties, center);
+    const rates = scenario && Number.isFinite(actualRate)
+      ? (splitRates ? scenario.ratesFor(details) : { land: actualRate, improvement: actualRate })
+      : null;
     const hypotheticalTax = rates
       ? (Number.isFinite(land) ? land * rates.land : 0) + improvement * rates.improvement
       : null;
@@ -2689,7 +2930,7 @@ async function detailedParcelCsv(signal) {
       properties.JURSCODE, properties.TOWNCODE, properties.DESCTOWN, details.county, details.municipality ?? "",
       findDistrict(districts.legislative, center), findDistrict(districts.congressional, center),
       findDistrict(councilDistricts, center),
-      Number.isFinite(actualRate) ? formatRateInput(actualRate) : "", roundCents(predictedTax),
+      Number.isFinite(actualRate) ? formatRateInput(actualRate) : "", roundCents(predictedTax), splitRates ? 1 : 0,
       rates ? formatRateInput(rates.land) : "", rates ? formatRateInput(rates.improvement) : "",
       roundCents(hypotheticalTax), roundCents(change),
       change !== null && predictedTax > 0 ? Number(((change / predictedTax) * 100).toFixed(2)) : "",
@@ -2753,8 +2994,9 @@ function taxPopupDetails(properties) {
     ? totalValue * currentRate
     : null;
   const details = taxJurisdictionDetails(properties);
-  const scenarioRates = taxScenarioModel ? scenarioRatesFor(details) : null;
-  const hypotheticalTax = !taxScenarioModel
+  const splitRates = splitRatesApply(properties);
+  const scenarioRates = taxScenarioModel && splitRates ? scenarioRatesFor(details) : null;
+  const hypotheticalTax = !taxScenarioModel || !splitRates
     ? currentTax
     : scenarioRates
       ? (Number.isFinite(landValue) ? landValue * scenarioRates.land : 0)
@@ -2765,6 +3007,7 @@ function taxPopupDetails(properties) {
     currentRate,
     currentTax,
     hypotheticalTax,
+    splitRates,
     countyNote: COUNTY_TAX_RATES[details.county]?.note ?? null,
     countySource: COUNTY_TAX_RATES[details.county]?.source ?? null,
   };
@@ -2803,6 +3046,7 @@ function popupMarkup(properties) {
         <dt>Zone</dt><dd>${escapeHtml(displayValue(properties.ZONING))}</dd>
         <dt>Applicable tax rate</dt><dd>${escapeHtml(formatTaxRate(taxDetails.currentRate))} <a href="${escapeHtml(TAX_RATE_SOURCE.url)}" target="_blank" rel="noopener">(SDAT ${escapeHtml(TAX_RATE_SOURCE.updated)})</a>${taxDetails.countySource ? ` <a href="${escapeHtml(taxDetails.countySource.url)}" target="_blank" rel="noopener" title="${escapeHtml(taxDetails.countyNote)}">(county add-on rates)</a>` : ""}</dd>
         <dt>Predicted tax bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.currentTax))}</dd>
+        ${activeCoverageMode() === "all" ? "" : `<dt>Split rates apply</dt><dd>${taxDetails.splitRates ? "Yes" : "No (keeps current rate)"}</dd>`}
         <dt>Hypothetical split-rate bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.hypotheticalTax))}</dd>
         <dt>Change</dt><dd${billChange ? ` class="parcel-popup-change is-${billChange}"` : ""}>${escapeHtml(changeText)}</dd>
       </dl>
@@ -2836,6 +3080,7 @@ function prepareTaxModelControls() {
     );
     elements.taxScopeSelect.value = taxScenarioModel.scope;
     elements.taxScopeControl.hidden = taxScenarioModel.scopes.length < 2;
+    updateCoverageNote();
     renderTaxScenario();
   }
   elements.underutilizedControl.hidden = false;
@@ -2992,8 +3237,11 @@ function computeTaxScenario() {
     let countyTotal = 0;
     county.jurisdictions.forEach((details) => {
       const rates = scenarioRatesFor(details);
+      // Accounts outside the coverage setting keep their current tax.
+      const covered = details.covered ?? details;
       const tax = rates
-        ? details.landValue * rates.land + details.improvementValue * rates.improvement
+        ? details.currentTax - covered.currentTax
+          + covered.landValue * rates.land + covered.improvementValue * rates.improvement
         : Number.NaN;
       byJurisdiction.set(details.jurisdiction, tax);
       countyTotal += tax;
@@ -3180,6 +3428,21 @@ function revenueNeutralUnits(model) {
   return model.counties.flatMap((county) => county.jurisdictions.map((details) => [details.jurisdiction, details]));
 }
 
+function unitJurisdictions(unit) {
+  return unit.counties
+    ? unit.counties.flatMap((county) => county.jurisdictions)
+    : unit.jurisdictions || [unit];
+}
+
+// Totals for the accounts the split rates apply to. `covered` is only set when coverage is limited.
+function coveredTotals(jurisdictions) {
+  const fields = ["parcelCount", "landValue", "improvementValue", "currentTax"];
+  return Object.fromEntries(fields.map((field) => [
+    field,
+    jurisdictions.reduce((total, details) => total + ((details.covered ?? details)[field] || 0), 0),
+  ]));
+}
+
 function neutralMode() {
   return document.querySelector('input[name="neutral-mode"]:checked')?.value ?? "ratio";
 }
@@ -3195,11 +3458,13 @@ function updateNeutralModeControls() {
 }
 
 // Land-only: land rate = current tax ÷ land value, improvements untaxed.
+// Only accounts the split rates apply to are counted; the rest keep their current tax.
 function applyRevenueNeutralLandOnly(model) {
   revenueNeutralUnits(model).forEach(([key, unit]) => {
-    if (unit.landValue <= 0) return;
+    const covered = coveredTotals(unitJurisdictions(unit));
+    if (covered.landValue <= 0) return;
     model.rates[model.scope][key] = {
-      land: formatRateInput(unit.currentTax / unit.landValue),
+      land: formatRateInput(covered.currentTax / covered.landValue),
       improvement: "0",
     };
   });
@@ -3207,8 +3472,8 @@ function applyRevenueNeutralLandOnly(model) {
   setStatus("Applied revenue-neutral land-only rates (improvements untaxed).", "success");
 }
 
-// For land:improvement ratio k, solves improvement rate r so that
-// r × (k × land + improvements) equals each editable row's current tax.
+// For land:improvement ratio k, solves improvement rate r so that r × (k × land + improvements)
+// equals the current tax of each editable row's accounts that the split rates apply to.
 function applyRevenueNeutralRatio() {
   const model = taxScenarioModel;
   if (!model) return;
@@ -3225,9 +3490,10 @@ function applyRevenueNeutralRatio() {
   }
   input.setCustomValidity("");
   revenueNeutralUnits(model).forEach(([key, unit]) => {
-    const base = ratio * unit.landValue + unit.improvementValue;
+    const covered = coveredTotals(unitJurisdictions(unit));
+    const base = ratio * covered.landValue + covered.improvementValue;
     if (base <= 0) return;
-    const improvementRate = unit.currentTax / base;
+    const improvementRate = covered.currentTax / base;
     model.rates[model.scope][key] = {
       land: formatRateInput(improvementRate * ratio),
       improvement: formatRateInput(improvementRate),
@@ -3252,6 +3518,10 @@ async function loadParcels() {
   if (downloadRequest) {
     downloadRequest.abort();
     downloadRequest = null;
+  }
+  if (coverageRequest) {
+    coverageRequest.abort();
+    coverageRequest = null;
   }
   underutilizedUpdateId += 1;
   underutilizedContext = null;
@@ -3306,6 +3576,23 @@ async function loadParcels() {
     );
     if (currentRequest !== request || selectedGeography !== geographyAtRequestStart) return;
 
+    // Keep the Advanced coverage setting across selections. If it cannot be loaded, fall back to everywhere.
+    let coverageError = null;
+    if (elements.coverageSelect.value !== "all") {
+      showParcelLoadProgress("Finding the accounts split rates apply to…", 0, null, true);
+      try {
+        setSplitRateCoverage(
+          taxSummary,
+          await loadSplitRateCoverage(elements.coverageSelect.value, geographyAtRequestStart, request.signal),
+        );
+      } catch (error) {
+        if (error.name === "AbortError") throw error;
+        console.warn("Could not limit where split rates apply:", error);
+        coverageError = error;
+      }
+      if (currentRequest !== request || selectedGeography !== geographyAtRequestStart) return;
+    }
+
     currentTaxRate = taxSummary.countyTaxRate;
     taxSummary.loadedAt = new Date().toISOString();
     taxSummary.geographyTypeLabel = GEOGRAPHY_CONFIG[elements.geographyTypeSelect.value]?.label ?? null;
@@ -3317,7 +3604,11 @@ async function loadParcels() {
     elements.taxDownloadControls.hidden = false;
     hideParcelLoadProgress();
     updateMapStatus(`${taxSummary.parcelCount.toLocaleString()} taxable accounts in ${geographyName}`);
-    setStatus(`${TAX_CONFIG.title} is ready.`, "success");
+    if (coverageError) {
+      setStatus(`${TAX_CONFIG.title} is ready, but split rates apply everywhere. ${coverageError.message}`, "error");
+    } else {
+      setStatus(`${TAX_CONFIG.title} is ready.`, "success");
+    }
     await renderPromise;
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -3614,6 +3905,7 @@ elements.applyNeutralRatio.addEventListener("click", applyRevenueNeutralRatio);
 elements.neutralModeInputs.forEach((input) => input.addEventListener("change", updateNeutralModeControls));
 elements.neutralRatio.addEventListener("input", () => elements.neutralRatio.setCustomValidity(""));
 elements.resetTaxModel.addEventListener("click", resetTaxScenario);
+elements.coverageSelect.addEventListener("change", applySplitRateCoverage);
 elements.downloadSummary.addEventListener("click", () => {
   runDownload(
     async (signal) => downloadTextFile(downloadBaseName("summary.txt"), await summaryText(signal), "text/plain;charset=utf-8"),

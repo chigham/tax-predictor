@@ -59,7 +59,7 @@
         </div>
         <p>Each included point represents one Maryland tax account, including individual condominium units. The analysis uses accounts with positive appraised full value, no exemption class, and a non-placeholder account ID. Maryland iMAP parcel and assessment data are grouped by the selected county, district, or municipality.</p>
         <h3>Comparing tax scenarios</h3>
-        <p>Estimated current tax applies each county's real property tax rate, or the municipal rate where a town's rate differs, to assessed value. Every rate comes from the <a href="https://dat.maryland.gov/SiteAssets/Pages/Tax-Rates/Tax%20Rates%202026-2027%20-%20Tax%20Table%20%26%20Homestead%20Credit%20Caps_July%202026_0726-A.pdf" target="_blank" rel="noopener">Maryland SDAT 2026–2027 tax rate table</a> (updated July 2026). Montgomery County's 0.7176% combines the 0.6706% base rate and the 0.047% MCPS-designated rate, which applies countywide (<a href="https://assets.montgomerycountymd.gov/files/2026-06/2026%20Real%20PropertyTax%20Rate%20Schedule.pdf" target="_blank" rel="noopener">Montgomery County 2026 rate schedule</a>). St. Mary's County's 0.9278% combines the 0.8478% base rate, the 0.056% fire rate, and the 0.024% supplemental services rate, which apply countywide (<a href="https://www.stmaryscountymd.gov/docs/REALESTATETAXRATES.pdf" target="_blank" rel="noopener">St. Mary's County real estate tax rates</a>). A split-rate scenario applies separate rates to assessed land value and improvements. The revenue-neutral preset chooses rates intended to match the modeled current total for the selected area.</p>
+        <p>Estimated current tax applies each county's real property tax rate, or the municipal rate where a town's rate differs, to assessed value. Every rate comes from the <a href="https://dat.maryland.gov/SiteAssets/Pages/Tax-Rates/Tax%20Rates%202026-2027%20-%20Tax%20Table%20%26%20Homestead%20Credit%20Caps_July%202026_0726-A.pdf" target="_blank" rel="noopener">Maryland SDAT 2026–2027 tax rate table</a> (updated July 2026). Montgomery County's 0.7176% combines the 0.6706% base rate and the 0.047% MCPS-designated rate, which applies countywide (<a href="https://assets.montgomerycountymd.gov/files/2026-06/2026%20Real%20PropertyTax%20Rate%20Schedule.pdf" target="_blank" rel="noopener">Montgomery County 2026 rate schedule</a>). St. Mary's County's 0.9278% combines the 0.8478% base rate, the 0.056% fire rate, and the 0.024% supplemental services rate, which apply countywide (<a href="https://www.stmaryscountymd.gov/docs/REALESTATETAXRATES.pdf" target="_blank" rel="noopener">St. Mary's County real estate tax rates</a>). A split-rate scenario applies separate rates to assessed land value and improvements. The revenue-neutral preset chooses rates intended to match the modeled current total for the selected area. An Advanced setting can limit split rates to 2020 Census urban areas, or exclude farm, marsh, and managed forest land; excluded accounts keep their current rate.</p>
         <div class="methodology-note"><strong>Important limitation</strong><p>These are exploratory estimates. Bills are assessed value × rate. Homestead and Homeowners' tax credits, assessment phase-ins, and other credits are not modeled, and the parcel data and filters are not a complete tax determination. Results are not official bills.</p></div>
         <p class="methodology-source">Data: <a href="https://imap.maryland.gov/" target="_blank" rel="noopener">Maryland iMAP</a> (parcels and assessments) and <a href="https://dat.maryland.gov/SiteAssets/Pages/Tax-Rates/Tax%20Rates%202026-2027%20-%20Tax%20Table%20%26%20Homestead%20Credit%20Caps_July%202026_0726-A.pdf" target="_blank" rel="noopener">Maryland SDAT</a> (tax rates), with Montgomery and St. Mary's county documents for their countywide add-on rates. See the <a href="README.md#data-service">data notes</a> for source and query details.</p>
       </dialog>
@@ -218,6 +218,18 @@
             <p class="tax-model-breakdown-heading">Hypothetical County Property Tax</p>
           </div>
           <button id="reset-tax-model" class="scenario-button scenario-button--wide" type="button">Reset to current rates</button>
+          <details class="advanced-settings">
+            <summary>Advanced <span id="advanced-settings-state" class="advanced-settings__state"></span></summary>
+            <label class="scenario-field">
+              <span>Where split rates apply</span>
+              <select id="coverage-select" aria-describedby="coverage-note">
+                <option value="all" selected>Everywhere (default)</option>
+                <option value="urban">Only within urban areas</option>
+                <option value="exclude-farm-forest">Exclude farm, marsh, and managed forest land</option>
+              </select>
+            </label>
+            <p id="coverage-note" class="scenario-hint"></p>
+          </details>
         </form>
         <section id="tax-download-controls" class="tax-download-controls" hidden aria-labelledby="tax-download-heading">
           <p id="tax-download-heading" class="controls-heading">Download analysis data</p>

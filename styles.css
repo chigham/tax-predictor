@@ -1448,6 +1448,43 @@ h2 {
   padding: 8px 10px;
 }
 
+.advanced-settings {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(201, 152, 61, 0.32);
+}
+
+.advanced-settings > summary {
+  color: var(--green-dark);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.advanced-settings > summary:focus-visible {
+  outline: 2px solid rgba(20, 107, 87, 0.3);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.advanced-settings__state {
+  color: #8b671c;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.advanced-settings__state:not(:empty)::before {
+  content: "· ";
+}
+
+.advanced-settings[open] > summary {
+  margin-bottom: 9px;
+}
+
+.advanced-settings .scenario-field {
+  margin-bottom: 0;
+}
+
 .tax-scenario-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
