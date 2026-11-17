@@ -60,6 +60,8 @@
         <p>Each included point represents one Maryland tax account, including individual condominium units. The analysis uses accounts with positive appraised full value, no exemption class, and a non-placeholder account ID. Maryland iMAP parcel and assessment data are grouped by the selected county, district, or municipality.</p>
         <h3>Comparing tax scenarios</h3>
         <p>Estimated current tax applies each county's real property tax rate, or the municipal rate where a town's rate differs, to assessed value. Every rate comes from the <a href="https://dat.maryland.gov/SiteAssets/Pages/Tax-Rates/Tax%20Rates%202026-2027%20-%20Tax%20Table%20%26%20Homestead%20Credit%20Caps_July%202026_0726-A.pdf" target="_blank" rel="noopener">Maryland SDAT 2026–2027 tax rate table</a> (updated July 2026). Montgomery County's 0.7176% combines the 0.6706% base rate and the 0.047% MCPS-designated rate, which applies countywide (<a href="https://assets.montgomerycountymd.gov/files/2026-06/2026%20Real%20PropertyTax%20Rate%20Schedule.pdf" target="_blank" rel="noopener">Montgomery County 2026 rate schedule</a>). St. Mary's County's 0.9278% combines the 0.8478% base rate, the 0.056% fire rate, and the 0.024% supplemental services rate, which apply countywide (<a href="https://www.stmaryscountymd.gov/docs/REALESTATETAXRATES.pdf" target="_blank" rel="noopener">St. Mary's County real estate tax rates</a>). A split-rate scenario applies separate rates to assessed land value and improvements. The revenue-neutral preset chooses rates intended to match the modeled current total for the selected area. An Advanced setting can limit split rates to 2020 Census urban areas, or exclude farm, marsh, and managed forest land; excluded accounts keep their current rate.</p>
+        <h3>Map colors</h3>
+        <p>At zoom 14 and closer, parcels can be colored by bill change (blue lower, red higher), by an underutilized definition, or by land value per acre. Land value per acre divides the land assessments of the accounts in a parcel shape by the shape's GIS acreage, less any smaller shapes inside it. Its colors are percentile groups of the whole selection, so similar neighbors with very different colors can point to inconsistent land assessments. Farm, marsh, and managed forest land is assessed at agricultural use value, so it gets its own color and is left out of the percentiles.</p>
         <div class="methodology-note"><strong>Important limitation</strong><p>These are exploratory estimates. Bills are assessed value × rate. Homestead and Homeowners' tax credits, assessment phase-ins, and other credits are not modeled, and the parcel data and filters are not a complete tax determination. Results are not official bills.</p></div>
         <p class="methodology-source">Data: <a href="https://imap.maryland.gov/" target="_blank" rel="noopener">Maryland iMAP</a> (parcels and assessments) and <a href="https://dat.maryland.gov/SiteAssets/Pages/Tax-Rates/Tax%20Rates%202026-2027%20-%20Tax%20Table%20%26%20Homestead%20Credit%20Caps_July%202026_0726-A.pdf" target="_blank" rel="noopener">Maryland SDAT</a> (tax rates), with Montgomery and St. Mary's county documents for their countywide add-on rates. See the <a href="README.md#data-service">data notes</a> for source and query details.</p>
       </dialog>
@@ -107,23 +109,27 @@
               <p>Parcels are included when their centers fall inside the selected geography.</p>
             </div>
           </div>
-          <div id="underutilized-control" class="selection-control underutilized-control" hidden>
-            <label class="underutilized-label" for="underutilized-select">Underutilized parcel view</label>
+          <div id="parcel-color-control" class="selection-control underutilized-control" hidden>
+            <label class="underutilized-label" for="parcel-color-select">Color parcels by</label>
+            <select id="parcel-color-select" class="underutilized-select" aria-describedby="parcel-color-description">
+              <option value="bill-change" selected>Bill change (default)</option>
+              <option value="underutilized">Underutilized parcels</option>
+              <option value="land-value-per-acre">Land value per acre</option>
+              <option value="plain">No coloring</option>
+            </select>
+            <p id="parcel-color-description" class="parcel-color-description"></p>
+            <div id="underutilized-options" class="parcel-color-suboptions" hidden>
+            <label class="underutilized-label" for="underutilized-select">Underutilized definition</label>
             <select id="underutilized-select" class="underutilized-select" aria-describedby="underutilized-description">
-              <option value="">Show all loaded parcels</option>
-              <option value="vacant">No improvements or vacant</option>
+              <option value="vacant" selected>No improvements or vacant</option>
               <option value="land-majority">Land &gt; improvements</option>
               <option value="high-value-urban">HIGH VALUE land &gt; improvements</option>
               <option value="above-mean-sfh">Land:total &gt; mean SFH</option>
               <option value="above-median-sfh">Land:total &gt; median SFH</option>
             </select>
             <p id="underutilized-description" class="underutilized-description" role="note" hidden>
-              <strong>Selected view:</strong> <span id="underutilized-description-text"></span>
+              <strong>Definition:</strong> <span id="underutilized-description-text"></span>
             </p>
-            <div id="underutilized-zoom-hint" class="underutilized-zoom-hint" role="status" aria-live="polite">
-              <span id="underutilized-zoom-hint-text"></span>
-              <button id="underutilized-zoom-button" class="underutilized-zoom-button" type="button"></button>
-            </div>
             <details class="underutilized-definitions">
               <summary>View underutilized view definitions</summary>
               <dl>
@@ -149,6 +155,11 @@
                 </div>
               </dl>
             </details>
+            </div>
+            <div id="parcel-color-zoom-hint" class="underutilized-zoom-hint" role="status" aria-live="polite">
+              <span id="parcel-color-zoom-hint-text"></span>
+              <button id="parcel-color-zoom-button" class="underutilized-zoom-button" type="button"></button>
+            </div>
           </div>
         </div>
         <p class="data-note"><span class="live-dot" aria-hidden="true"></span> Parcels provided by Maryland iMAP</p>

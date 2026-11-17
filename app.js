@@ -29,6 +29,7 @@ const sqlList = (values) => values.map((value) => `'${value}'`).join(", ");
 const NOT_AGRICULTURAL_WHERE = `(LU IS NULL OR LU NOT IN (${sqlList(AGRICULTURAL_LAND_USES)}))`;
 const IMPROVED_WHERE = `${NOT_AGRICULTURAL_WHERE} AND NFMIMPVL > 0`;
 const GEOMETRY_SERVICE_URL = "https://mdgeodata.md.gov/imap/rest/services/Utilities/Geometry/GeometryServer";
+const NOT_FARM_FOREST_WHERE = `${NOT_AGRICULTURAL_WHERE} AND FCMACODE IS NULL`;
 // Advanced setting: which accounts get the scenario's split rates. All other accounts keep their current rate.
 // Farmland is identified by SDAT land use, not zoning: zoning codes differ by county, and Maryland
 // already assesses farmland by its agricultural use.
@@ -44,7 +45,7 @@ const SPLIT_RATE_COVERAGE = {
   "exclude-farm-forest": {
     label: "Excluding farm, marsh, and managed forest land",
     description: "Accounts with Agricultural or Marsh Land use, or woodland under a Forest Conservation Management Agreement, keep their current rate. Split rates apply to all other accounts. Land use is used instead of zoning because zoning codes differ by county and Maryland already assesses farmland by its use.",
-    where: `${NOT_AGRICULTURAL_WHERE} AND FCMACODE IS NULL`,
+    where: NOT_FARM_FOREST_WHERE,
   },
 };
 // Report property types. Each account belongs to exactly one type: the first whose rule matches.
@@ -138,6 +139,36 @@ const OCCUPANCY_GROUPS = [
 const LAND_SHARE_BANDS = 20;
 // Bills that change by less than this fraction either way count as "about the same".
 const ABOUT_THE_SAME_THRESHOLD = 0.01;
+const PARCEL_COLOR_VIEWS = {
+  "bill-change": {
+    label: "bill change",
+    description: "Blue parcels would pay less and red parcels would pay more under the split-rate scenario than at current rates.",
+  },
+  underutilized: {
+    label: "underutilized parcels",
+    description: "Orange parcels match the underutilized definition chosen below. Other parcels are tan.",
+  },
+  "land-value-per-acre": {
+    label: "land value per acre",
+    description: "Assessed land value divided by the parcel shape's GIS acreage. Similar neighbors with very different colors can point to inconsistent land assessments. Colors are percentile groups of the whole selection, so they stay fixed while panning. Farm, marsh, and managed forest land is assessed at use value and gets its own color.",
+  },
+  plain: {
+    label: "no coloring",
+    description: "Parcels are drawn in one color with no highlights.",
+  },
+};
+const UNDERUTILIZED_COLORS = { color: "#e56b2f", fillColor: "#f4a261" };
+// Bill change and underutilized views: parcels whose accounts all keep their current rate under the
+// Advanced "Where split rates apply" setting.
+const KEEPS_CURRENT_RATE_STYLE = { color: "#8a8a8a", fillColor: "#e3e3e3", dashArray: "4 3", label: "Keeps current rate" };
+const LAND_VALUE_PER_ACRE = {
+  classCount: 7,
+  // Viridis: a colorblind-safe sequential ramp from dark purple (low) to yellow (high).
+  colors: ["#440154", "#443983", "#31688e", "#21918c", "#35b779", "#90d743", "#fde725"],
+  fillOpacity: 0.45,
+  farm: { color: "#857c69", fillColor: "#d2cab7", label: "Farm, marsh, or managed forest" },
+  noData: { color: "#7a7a7a", fillColor: "#ffffff", fillOpacity: 0, dashArray: "2 3", label: "No parcel acreage" },
+};
 // Every rate in COUNTY_TAX_RATES was checked against this SDAT table.
 const TAX_RATE_SOURCE = {
   title: "Maryland SDAT, Tax Rates 2026-2027: Tax Table & Homestead Credit Caps",
@@ -541,13 +572,16 @@ const elements = {
   geographyTypeSelect: document.querySelector("#geography-type-select"),
   geographyChoiceLabel: document.querySelector("#geography-choice-label"),
   geographyChoiceSelect: document.querySelector("#geography-choice-select"),
-  underutilizedControl: document.querySelector("#underutilized-control"),
+  parcelColorControl: document.querySelector("#parcel-color-control"),
+  parcelColorSelect: document.querySelector("#parcel-color-select"),
+  parcelColorDescription: document.querySelector("#parcel-color-description"),
+  colorZoomHint: document.querySelector("#parcel-color-zoom-hint"),
+  colorZoomHintText: document.querySelector("#parcel-color-zoom-hint-text"),
+  colorZoomButton: document.querySelector("#parcel-color-zoom-button"),
+  underutilizedOptions: document.querySelector("#underutilized-options"),
   underutilizedSelect: document.querySelector("#underutilized-select"),
   underutilizedDescription: document.querySelector("#underutilized-description"),
   underutilizedDescriptionText: document.querySelector("#underutilized-description-text"),
-  underutilizedZoomHint: document.querySelector("#underutilized-zoom-hint"),
-  underutilizedZoomHintText: document.querySelector("#underutilized-zoom-hint-text"),
-  underutilizedZoomButton: document.querySelector("#underutilized-zoom-button"),
   selectedGeography: document.querySelector("#selected-geography"),
   acknowledgements: document.querySelector(".acknowledgements"),
   acknowledgementsTrigger: document.querySelector(".acknowledgements-trigger"),
@@ -556,27 +590,61 @@ const elements = {
 
 zoomControl.getContainer().append(elements.mapStatus.closest(".map-status"));
 
-const billChangeLegend = L.DomUtil.create("div", "bill-change-legend", map.getContainer());
-billChangeLegend.hidden = true;
-billChangeLegend.setAttribute("aria-label", "Map legend: change in parcel tax bill");
-billChangeLegend.innerHTML = `
-  <span class="bill-change-legend-title">Bill change</span>
-  ${Object.values(TAX_CONFIG.billChangeStyles).map(({ color, fillColor, label }) => `
-    <span class="bill-change-legend-item">
-      <span class="bill-change-legend-swatch" style="--swatch-stroke: ${color}; --swatch-fill: ${fillColor}"></span>${label}
-    </span>`).join("")}
-  <span class="bill-change-legend-note"></span>`;
-L.DomEvent.disableClickPropagation(billChangeLegend);
-L.DomEvent.disableScrollPropagation(billChangeLegend);
+const mapLegend = L.DomUtil.create("div", "map-legend", map.getContainer());
+mapLegend.hidden = true;
+mapLegend.setAttribute("role", "group");
+L.DomEvent.disableClickPropagation(mapLegend);
+L.DomEvent.disableScrollPropagation(mapLegend);
 
-function updateBillChangeLegend() {
-  billChangeLegend.hidden = !taxScenarioModel;
-  const note = billChangeLegend.querySelector(".bill-change-legend-note");
-  note.textContent = map.getZoom() < VECTOR_MIN_ZOOM ? `Zoom to ${VECTOR_MIN_ZOOM}+ to color parcels` : "";
-  note.hidden = !note.textContent;
+function legendItemMarkup({ color, fillColor, fillOpacity = 0.25, dashArray = null, label }) {
+  const fill = fillOpacity > 0
+    ? `color-mix(in srgb, ${fillColor} ${Math.round(Math.min(1, fillOpacity + 0.2) * 100)}%, #fff)`
+    : "transparent";
+  return `<span class="map-legend-item"><span class="map-legend-swatch" style="border-color: ${color}; border-style: ${dashArray ? "dashed" : "solid"}; background: ${fill}"></span>${escapeHtml(label)}</span>`;
 }
 
-map.on("zoomend", updateBillChangeLegend);
+function mapLegendContent(view) {
+  const keepsCurrentRate = activeCoverageMode() !== "all" ? [KEEPS_CURRENT_RATE_STYLE] : [];
+  if (view === "bill-change") {
+    return { title: "Bill change", items: [...Object.values(TAX_CONFIG.billChangeStyles), ...keepsCurrentRate] };
+  }
+  if (view === "underutilized") {
+    return {
+      title: `Underutilized: ${elements.underutilizedSelect.selectedOptions[0]?.textContent ?? ""}`,
+      items: [
+        { ...UNDERUTILIZED_COLORS, fillOpacity: 0.58, label: "Underutilized" },
+        { color: TAX_CONFIG.color, fillColor: TAX_CONFIG.fillColor, label: "Other parcels" },
+        ...keepsCurrentRate,
+        ...keepsCurrentRate.map((style) => ({ ...style, color: UNDERUTILIZED_COLORS.color, label: "Underutilized, keeps current rate" })),
+      ],
+    };
+  }
+  if (view === "land-value-per-acre") {
+    const summary = latestTaxSummary;
+    const note = summary.landValuePerAcre
+      ? "Colors are percentile groups of the selection's parcels"
+      : summary.landValueError ? "Color breaks could not be loaded" : "Calculating color breaks…";
+    return {
+      title: "Land value per acre",
+      items: [...(summary.landValuePerAcre?.classes ?? []), LAND_VALUE_PER_ACRE.farm, LAND_VALUE_PER_ACRE.noData],
+      note,
+    };
+  }
+  return { title: "Parcels", items: [{ color: TAX_CONFIG.color, fillColor: TAX_CONFIG.fillColor, label: "Taxable parcels" }] };
+}
+
+function updateMapLegend() {
+  mapLegend.hidden = !latestTaxSummary;
+  if (mapLegend.hidden) return;
+  const view = elements.parcelColorSelect.value;
+  const { title, items, note } = mapLegendContent(view);
+  const notes = [note, map.getZoom() < VECTOR_MIN_ZOOM ? `Zoom to ${VECTOR_MIN_ZOOM}+ to color parcels` : null].filter(Boolean);
+  mapLegend.setAttribute("aria-label", `Map legend: ${title}`);
+  mapLegend.innerHTML = `<span class="map-legend-title">${escapeHtml(title)}</span>${items.map(legendItemMarkup).join("")}${notes
+    .map((text) => `<span class="map-legend-note">${escapeHtml(text)}</span>`).join("")}`;
+}
+
+map.on("zoomend", updateMapLegend);
 
 let parcelLayer = null;
 let geographyLayer = null;
@@ -590,9 +658,9 @@ let taxScenarioFrame = 0;
 let downloadRequest = null;
 let openParcelPopup = null;
 let latestTaxSummary = null;
-let underutilizedMode = "";
-let underutilizedUpdateId = 0;
+let colorViewUpdateId = 0;
 let underutilizedContext = null;
+let landValueRequest = null;
 let urbanFeaturesPromise = null;
 let urbanPointTesters = null;
 let coverageRequest = null;
@@ -677,8 +745,12 @@ function clearParcelResults() {
     coverageRequest.abort();
     coverageRequest = null;
   }
-  underutilizedUpdateId += 1;
+  colorViewUpdateId += 1;
   underutilizedContext = null;
+  if (landValueRequest) {
+    landValueRequest.abort();
+    landValueRequest = null;
+  }
   if (parcelLayer) {
     map.removeLayer(parcelLayer);
     parcelLayer = null;
@@ -690,13 +762,10 @@ function clearParcelResults() {
   removeParcelLoadingMarker();
   latestTaxSummary = null;
   taxScenarioModel = null;
-  updateBillChangeLegend();
   hideParcelLoadProgress();
-  elements.underutilizedSelect.disabled = false;
-  underutilizedMode = "";
-  elements.underutilizedSelect.value = "";
-  updateUnderutilizedDescription();
-  elements.underutilizedControl.hidden = true;
+  elements.parcelColorControl.hidden = true;
+  updateMapLegend();
+  updateColorZoomHint();
   currentTaxRate = null;
   elements.taxModelControls.hidden = true;
   elements.hypotheticalTaxValue.textContent = "—";
@@ -1239,16 +1308,64 @@ function geometryArea(geometry) {
   }, 0);
 }
 
-function attachPointsToShapes(shapes, points) {
+function shapeCandidates(shapes) {
   const candidates = shapes
     .filter((shape) => shape.geometry)
-    .map((shape) => ({
-      shape,
-      area: geometryArea(shape.geometry),
-      contains: createPointInGeometryTester(shape.geometry),
-      accounts: [],
-    }))
+    .map((shape) => {
+      const [minX, minY, maxX, maxY] = pointsBounds(polygonList(shape.geometry).flatMap((polygon) => polygon[0]));
+      return {
+        shape,
+        area: geometryArea(shape.geometry),
+        minX,
+        minY,
+        maxX,
+        maxY,
+        contains: createPointInGeometryTester(shape.geometry),
+        accounts: [],
+      };
+    })
     .sort((a, b) => a.area - b.area);
+  assignNetAcres(candidates);
+  return candidates;
+}
+
+// A shape can sit inside a larger one (for example, a lot inside a condominium complex outline).
+// Each shape's acreage (POLYACRES) excludes the shapes directly inside it, so no land is counted twice.
+// A shape counts as inside only when its bounding box fits in the larger shape's and its center is inside it;
+// neighbors that merely overlap a little are not subtracted.
+// `candidates` must be sorted by area, smallest first.
+function assignNetAcres(candidates) {
+  const tolerance = 2e-6; // degrees, about 0.2 m
+  candidates.forEach((candidate) => {
+    candidate.nestedAcres = 0;
+  });
+  candidates.forEach((child, index) => {
+    const childAcres = Number(child.shape.properties?.POLYACRES);
+    const center = geometryCenter(child.shape.geometry);
+    if (!(childAcres > 0) || !center) return;
+    for (let parentIndex = index + 1; parentIndex < candidates.length; parentIndex += 1) {
+      const parent = candidates[parentIndex];
+      if (
+        parent.area > child.area
+        && child.minX >= parent.minX - tolerance && child.maxX <= parent.maxX + tolerance
+        && child.minY >= parent.minY - tolerance && child.maxY <= parent.maxY + tolerance
+        && parent.contains(center)
+      ) {
+        parent.nestedAcres += childAcres;
+        return;
+      }
+    }
+  });
+  candidates.forEach((candidate) => {
+    const polygonAcres = Number(candidate.shape.properties?.POLYACRES);
+    candidate.polygonAcres = polygonAcres > 0 ? polygonAcres : null;
+    const netAcres = (candidate.polygonAcres ?? 0) - candidate.nestedAcres;
+    candidate.acres = candidate.polygonAcres && netAcres > 0 ? netAcres : null;
+  });
+}
+
+function attachPointsToShapes(shapes, points) {
+  const candidates = shapeCandidates(shapes);
   const orphans = [];
   points.forEach((point) => {
     const owner = candidates.find((candidate) => candidate.contains(point.geometry.coordinates));
@@ -1258,7 +1375,15 @@ function attachPointsToShapes(shapes, points) {
   const parcels = candidates
     .filter((candidate) => candidate.accounts.length)
     .sort((a, b) => b.area - a.area)
-    .map(({ shape, accounts }) => ({ type: "Feature", geometry: shape.geometry, properties: { accounts } }));
+    .map(({ shape, accounts, acres, polygonAcres, nestedAcres }) => ({
+      type: "Feature",
+      geometry: shape.geometry,
+      properties: {
+        accounts,
+        center: geometryCenter(shape.geometry),
+        shape: { acres, polygonAcres, nestedAcres },
+      },
+    }));
   return { parcels, orphans };
 }
 
@@ -1432,14 +1557,29 @@ async function loadShapes(spatialFilter, signal) {
   return queryAllGeojson(PARCEL_LAYER_URL, {
     where: PARCEL_SHAPE_WHERE,
     ...spatialFilter,
-    outFields: "OBJECTID",
+    outFields: "OBJECTID,POLYACRES",
     returnGeometry: "true",
     outSR: "4326",
   }, signal, MAX_PARCELS_PER_REQUEST);
 }
 
-// This one is really smart
+// Accounts at a clicked point, plus the acreage of the parcel shape that holds them (null without one).
+// Accounts are matched to shapes the same way as the drawn parcels, so the popup matches the map.
+// Matches account points to shapes the same way as the drawn parcels. Returns the smallest parcel that
+// contains the click, or the only parcel when every point falls in one shape; otherwise all accounts, no shape.
+function accountsForClick(shapes, points, click) {
+  const { parcels, orphans } = attachPointsToShapes(shapes, points);
+  // Parcels are sorted largest first, so the last one containing the click is the smallest.
+  const parcel = parcels.filter((candidate) => createPointInGeometryTester(candidate.geometry)(click)).at(-1)
+    ?? (parcels.length === 1 && !orphans.length ? parcels[0] : null);
+  return parcel
+    ? { accounts: parcel.properties.accounts, shape: parcel.properties.shape }
+    : { accounts: points.map((point) => point.properties || {}), shape: null };
+}
+
+// Accounts at a clicked point, plus the acreage of the parcel shape that holds them (null without one).
 async function loadAccountsAtPoint(latlng, geography, signal) {
+  const click = [latlng.lng, latlng.lat];
   const clickFilter = {
     geometry: `${latlng.lng},${latlng.lat}`,
     geometryType: "esriGeometryPoint",
@@ -1451,27 +1591,40 @@ async function loadAccountsAtPoint(latlng, geography, signal) {
     .filter((feature) => feature.geometry)
     .sort((a, b) => geometryArea(a.geometry) - geometryArea(b.geometry))[0];
   if (shape) {
-    const points = await loadAnalysisPoints(geography, {
+    const shapeFilter = {
       geometry: JSON.stringify(geographyGeometryForExport(shape)),
       geometryType: "esriGeometryPolygon",
       inSR: "4326",
       spatialRel: "esriSpatialRelIntersects",
-    }, signal);
-    if (points.length) return points.map((point) => point.properties || {});
+    };
+    const [nearbyShapes, points] = await Promise.all([
+      loadShapes(shapeFilter, signal),
+      loadAnalysisPoints(geography, shapeFilter, signal),
+    ]);
+    if (points.length) return accountsForClick(nearbyShapes, points, click);
   }
   const nearby = await loadAnalysisPoints(geography, {
     ...clickFilter,
     distance: "8",
     units: "esriSRUnit_Meter",
   }, signal);
-  return nearby.map((point) => point.properties || {});
+  if (!nearby.length) return { accounts: [], shape: null };
+  const [minX, minY, maxX, maxY] = pointsBounds(nearby.map((point) => point.geometry.coordinates));
+  const pad = 1e-6;
+  const nearbyShapes = await loadShapes({
+    geometry: `${minX - pad},${minY - pad},${maxX + pad},${maxY + pad}`,
+    geometryType: "esriGeometryEnvelope",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+  }, signal);
+  return accountsForClick(nearbyShapes, nearby, click);
 }
 
-function openAccountsPopup(latlng, accounts) {
+function openAccountsPopup(latlng, accounts, shape = null) {
   const popup = L.popup({ className: "parcel-tooltip", maxWidth: 300 })
     .setLatLng(latlng)
-    .setContent(stackedPopupMarkup(accounts));
-  openParcelPopup = { popup, accounts };
+    .setContent(stackedPopupMarkup(accounts, shape));
+  openParcelPopup = { popup, accounts, shape };
   popup.once("remove", () => {
     if (openParcelPopup?.popup === popup) openParcelPopup = null;
   });
@@ -1501,7 +1654,7 @@ function showParcelLoadingMarker(latlng) {
 
 // TODO: find out why this is handled here and not CSS (is it a map thing?)
 function underutilizedStyle(style) {
-  return { ...style, color: "#e56b2f", fillColor: "#f4a261", weight: 2.5, fillOpacity: 0.58 };
+  return { ...style, ...UNDERUTILIZED_COLORS, weight: 2.5, fillOpacity: 0.58 };
 }
 
 // This is another really cool function
@@ -1523,20 +1676,21 @@ function createParcelMapLayer(geography) {
     vectorLayer = null;
   };
 
-  const shapeStyle = (feature) => {
-    const accounts = feature.properties.accounts;
-    const center = geometryCenter(feature.geometry);
-    const style = createParcelStyle(billChangeCategory(accounts));
-    return accounts.some((account) => isUnderutilized(account, center))
-      ? underutilizedStyle(style)
-      : style;
-  };
+  const shapeStyle = (feature) => parcelStyle(
+    feature.properties.accounts,
+    feature.properties.shape.acres,
+    feature.properties.center,
+  );
   const orphanStyle = (points) => {
-    const { color } = createParcelStyle(billChangeCategory(points.map((point) => point.properties || {})));
-    const base = { radius: 5, color, weight: 1.5, fill: false };
-    return points.some((point) => isUnderutilized(point.properties || {}, point.geometry.coordinates))
-      ? { ...base, color: "#e56b2f", weight: 2.5 }
-      : base;
+    const style = parcelStyle(points.map((point) => point.properties || {}), null, points[0].geometry.coordinates);
+    return {
+      radius: 5,
+      color: style.color,
+      weight: style.weight > 1 ? 2.5 : 1.5,
+      opacity: style.opacity,
+      dashArray: style.dashArray,
+      fill: false,
+    };
   };
 
   layer.restyle = () => {
@@ -1577,8 +1731,11 @@ function createParcelMapLayer(geography) {
       style: shapeStyle,
       onEachFeature: (feature, child) => {
         child.on({
-          click: (event) => openAccountsPopup(event.latlng, feature.properties.accounts),
-          mouseover: () => child.setStyle({ weight: 2.5, fillOpacity: 0.48 }),
+          click: (event) => openAccountsPopup(event.latlng, feature.properties.accounts, feature.properties.shape),
+          mouseover: () => child.setStyle({
+            weight: 2.5,
+            fillOpacity: Math.min(0.7, shapeStyle(feature).fillOpacity + 0.23),
+          }),
           mouseout: () => child.setStyle(shapeStyle(feature)),
         });
       },
@@ -1620,9 +1777,9 @@ function createParcelMapLayer(geography) {
     parcelClickRequest = request;
 
     try {
-      const accounts = await loadAccountsAtPoint(event.latlng, geography, request.signal);
+      const { accounts, shape } = await loadAccountsAtPoint(event.latlng, geography, request.signal);
       if (!accounts.length || parcelClickRequest !== request || !map.hasLayer(layer)) return;
-      openAccountsPopup(event.latlng, accounts);
+      openAccountsPopup(event.latlng, accounts, shape);
     } catch (error) {
       if (error.name !== "AbortError") console.warn("Could not load the selected parcel:", error);
     } finally {
@@ -2051,7 +2208,146 @@ function createParcelStyle(billChange = null) {
     opacity: 0.8,
     fillColor: colors.fillColor,
     fillOpacity: 0.25,
+    dashArray: null,
   };
+}
+
+function keepsCurrentRateStyle(underutilized = false) {
+  return {
+    color: underutilized ? UNDERUTILIZED_COLORS.color : KEEPS_CURRENT_RATE_STYLE.color,
+    weight: underutilized ? 2 : 1,
+    opacity: 0.8,
+    fillColor: KEEPS_CURRENT_RATE_STYLE.fillColor,
+    fillOpacity: 0.25,
+    dashArray: KEEPS_CURRENT_RATE_STYLE.dashArray,
+  };
+}
+
+// Combined land value of the accounts in a shape per acre of that shape, or null without usable acreage.
+function shapeLandValuePerAcre(accounts, acres) {
+  if (!(acres > 0)) return null;
+  const landValue = accounts.reduce((total, account) => {
+    const land = Number(account.NFMLNDVL);
+    return total + (Number.isFinite(land) ? land : 0);
+  }, 0);
+  return landValue / acres;
+}
+
+// Legend entry for a shape in the land value per acre view, or null until the color breaks load.
+// Farm, marsh, and forest land is assessed at use value, so it gets its own entry instead of skewing the breaks.
+function landValueEntry(accounts, acres) {
+  if (accounts.some(isFarmOrForestLand)) return LAND_VALUE_PER_ACRE.farm;
+  const value = shapeLandValuePerAcre(accounts, acres);
+  if (value === null) return LAND_VALUE_PER_ACRE.noData;
+  const classes = latestTaxSummary?.landValuePerAcre?.classes;
+  if (!classes) return null;
+  return classes.find((entry) => value <= entry.max) ?? classes.at(-1);
+}
+
+// Style for a parcel shape (or an unmatched account marker) under the "Color parcels by" setting.
+function parcelStyle(accounts, acres, center) {
+  const view = elements.parcelColorSelect.value;
+  if (view === "land-value-per-acre") {
+    const entry = landValueEntry(accounts, acres);
+    if (!entry) return createParcelStyle();
+    return {
+      color: entry.color,
+      weight: 1,
+      opacity: 0.9,
+      fillColor: entry.fillColor,
+      fillOpacity: entry.fillOpacity ?? LAND_VALUE_PER_ACRE.fillOpacity,
+      dashArray: entry.dashArray ?? null,
+    };
+  }
+  if (view !== "bill-change" && view !== "underutilized") return createParcelStyle();
+  const keepsCurrentRate = activeCoverageMode() !== "all" && !accounts.some((account) => splitRatesApply(account));
+  if (view === "bill-change") {
+    return keepsCurrentRate ? keepsCurrentRateStyle() : createParcelStyle(billChangeCategory(accounts));
+  }
+  const underutilized = accounts.some((account) => isUnderutilized(account, accountPoints.get(account) ?? center));
+  if (keepsCurrentRate) return keepsCurrentRateStyle(underutilized);
+  return underutilized ? underutilizedStyle(createParcelStyle()) : createParcelStyle();
+}
+
+function formatCompactDollars(value) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1,
+  }).format(value);
+}
+
+// One class per break interval, colored by spreading the ramp across however many distinct breaks there are.
+function landValueClasses(breaks) {
+  const { colors, fillOpacity } = LAND_VALUE_PER_ACRE;
+  const count = breaks.length + 1;
+  return Array.from({ length: count }, (_, index) => {
+    const color = colors[count === 1 ? colors.length - 1 : Math.round((index * (colors.length - 1)) / (count - 1))];
+    let label = "All parcels";
+    if (count > 1 && index === 0) label = `Up to ${formatCompactDollars(breaks[0])}`;
+    else if (count > 1 && index === count - 1) label = `Over ${formatCompactDollars(breaks[index - 1])}`;
+    else if (count > 1) label = `${formatCompactDollars(breaks[index - 1])}–${formatCompactDollars(breaks[index])}`;
+    return { color, fillColor: color, fillOpacity, label, max: index < breaks.length ? breaks[index] : Infinity };
+  });
+}
+
+// Percentile breaks of land value per acre over every parcel shape in the selection, from the parcel
+// boundaries layer. Each shape uses the land value of the account it carries and its POLYACRES.
+// Farm, marsh, and managed forest land and shapes without acreage are left out.
+async function loadLandValueBreaks(geography, signal) {
+  const { classCount } = LAND_VALUE_PER_ACRE;
+  const params = new URLSearchParams(buildParcelQuery(geography).options.body);
+  ["outFields", "outSR", "resultRecordCount"].forEach((name) => params.delete(name));
+  params.set("where", `${params.get("where")} AND POLYACRES > 0 AND NFMLNDVL IS NOT NULL AND ${NOT_FARM_FOREST_WHERE}`);
+  params.set("returnGeometry", "false");
+  params.set("outStatistics", JSON.stringify(Array.from({ length: classCount - 1 }, (_, index) => ({
+    statisticType: "PERCENTILE_CONT",
+    statisticParameters: { value: Number(((index + 1) / classCount).toFixed(6)) },
+    onStatisticField: "CAST(NFMLNDVL AS FLOAT) / POLYACRES",
+    outStatisticFieldName: `p${index + 1}`,
+  }))));
+  params.set("f", "json");
+  const response = await fetch(`${PARCEL_LAYER_URL}/query`, {
+    method: "POST",
+    body: params,
+    signal,
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error?.message || `Parcel shape service returned ${response.status}.`);
+  }
+  const attributes = payload.features?.[0]?.attributes || {};
+  const breaks = [...new Set(
+    Array.from({ length: classCount - 1 }, (_, index) => attributes[`p${index + 1}`])
+      .filter((value) => value !== null && value !== undefined)
+      .map(Number)
+      .filter(Number.isFinite),
+  )].sort((a, b) => a - b);
+  return { breaks, classes: landValueClasses(breaks) };
+}
+
+// Loads the land value per acre breaks once per loaded selection.
+function ensureLandValueBreaks() {
+  const summary = latestTaxSummary;
+  if (!summary) return Promise.resolve();
+  if (!summary.landValuePromise) {
+    if (landValueRequest) landValueRequest.abort();
+    const request = new AbortController();
+    landValueRequest = request;
+    summary.landValueError = null;
+    summary.landValuePromise = loadLandValueBreaks(selectedGeography, request.signal)
+      .then((result) => {
+        summary.landValuePerAcre = result;
+      })
+      .catch((error) => {
+        summary.landValuePromise = null;
+        if (error.name !== "AbortError") summary.landValueError = error;
+        throw error;
+      })
+      .finally(() => {
+        if (landValueRequest === request) landValueRequest = null;
+      });
+  }
+  return summary.landValuePromise;
 }
 
 function displayValue(value, fallback = "Not available") {
@@ -2617,6 +2913,8 @@ Columns:
 - NFMLNDVL: land assessment; blank values are exported as 0.
 - NFMIMPVL: improvement assessment; blank values are exported as 0.
 - NFMTTLVL: total assessment.
+- PARCEL_POLYGON_ACRES: GIS acreage (POLYACRES) of the parcel shape that carries this account ID in the Maryland iMAP parcel boundaries layer. Blank when no shape carries the account ID, as for most condominium units.
+- LAND_VALUE_PER_ACRE: NFMLNDVL / PARCEL_POLYGON_ACRES, rounded to the dollar. On the map, a shape that holds several accounts is colored by their combined land value instead, so the two can differ. Farm, marsh, and managed forest land is assessed at agricultural use value, so its values are not comparable with other land.
 - JURSCODE, TOWNCODE, DESCTOWN: source jurisdiction attributes.
 - COUNTY: county from JURSCODE.
 - TAX_MUNICIPALITY: municipality whose rate differs from the county rate; blank for the rest of the county.
@@ -2639,7 +2937,15 @@ ${rateNotes(Object.keys(COUNTY_TAX_RATES)).map((entry) => `  ${rateNoteText(entr
 - UNDERUTILIZED_ABOVE_MEAN_SFH_LAND_RATIO: 1 when a non-SFH account's land-to-total assessment ratio is greater than the mean for qualifying SFH accounts in the selection.
 - UNDERUTILIZED_ABOVE_MEDIAN_SFH_LAND_RATIO: 1 when a non-SFH account's land-to-total assessment ratio is greater than the median for qualifying SFH accounts in the selection.
 
+MAP COLORS
+"Color parcels by" colors parcel shapes at zoom ${VECTOR_MIN_ZOOM} and closer. Each shape holds the account points that fall inside it (the smallest shape when shapes overlap).
+- Bill change (default): blue when the shape's combined hypothetical bill is lower than its current bill, red when higher, gray when unchanged. When the Advanced "Where split rates apply" setting is not Everywhere, shapes whose accounts all keep their current rate have a dashed gray outline.
+- Underutilized parcels: orange when at least one account matches the selected underutilized definition, tan otherwise. When the Advanced setting is not Everywhere, shapes whose accounts all keep their current rate have a dashed outline (orange if underutilized).
+- Land value per acre: the combined land assessment (NFMLNDVL) of the shape's accounts divided by the shape's GIS acreage (POLYACRES), less the acreage of any shapes directly inside it. Colors are ${LAND_VALUE_PER_ACRE.classCount} percentile groups computed by the server over every parcel shape in the selection, using each shape's own account land value and POLYACRES, so they do not change while panning. Farm, marsh, and managed forest land (the same rule as the Advanced exclusion: land use ${AGRICULTURAL_LAND_USES.join(" or ")}, or an FCMACODE value) is shown in its own color and left out of the percentiles because it is assessed at agricultural use value. Shapes without acreage have a dashed outline and no fill.
+- No coloring: every shape is tan.
+
 Source: Maryland iMAP parcel points: ${PARCEL_POINTS_LAYER_URL}. Accessed ${accessed}.
+Parcel shapes and GIS acreage: Maryland iMAP parcel boundaries: ${PARCEL_LAYER_URL}.
 Current tax rates: ${TAX_RATE_SOURCE.title}, updated ${TAX_RATE_SOURCE.updated}, tax year ${TAX_RATE_SOURCE.taxYear}: ${TAX_RATE_SOURCE.url}
 ${rateNotes(Object.keys(COUNTY_TAX_RATES)).map(({ county, source }) => `${county} add-on rates: ${source.title}: ${source.url}`).join("\n")}
 `;
@@ -2870,21 +3176,71 @@ async function loadTaxRecordsForDownload(signal) {
   return records;
 }
 
+// Parcel shape acreage (POLYACRES) keyed by the account ID each shape carries in the parcel boundaries layer.
+// Accounts that share a shape without carrying its account ID, such as most condominium units, are not included.
+async function loadPolygonAcresByAccount(geography, signal) {
+  const params = new URLSearchParams(buildParcelQuery(geography).options.body);
+  ["outSR", "resultRecordCount"].forEach((name) => params.delete(name));
+  params.set("where", `${params.get("where")} AND POLYACRES > 0`);
+  params.set("returnGeometry", "false");
+  params.set("f", "json");
+  const query = async (extra) => {
+    const body = new URLSearchParams(params);
+    Object.entries(extra).forEach(([name, value]) => body.set(name, value));
+    const response = await fetch(`${PARCEL_LAYER_URL}/query`, {
+      method: "POST",
+      body,
+      signal,
+      headers: { Accept: "application/json" },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error?.message || `Parcel shape service returned ${response.status}.`);
+    }
+    return payload;
+  };
+
+  const { count = 0 } = await query({ returnCountOnly: "true", outFields: "OBJECTID" });
+  const acresByAccount = new Map();
+  const offsets = Array.from({ length: Math.ceil(count / MAX_PARCELS_PER_REQUEST) }, (_, index) => index * MAX_PARCELS_PER_REQUEST);
+  let loaded = 0;
+  const loadPages = async () => {
+    while (offsets.length) {
+      const payload = await query({
+        outFields: "ACCTID,POLYACRES",
+        orderByFields: "OBJECTID",
+        resultOffset: String(offsets.shift()),
+        resultRecordCount: String(MAX_PARCELS_PER_REQUEST),
+      });
+      (payload.features || []).forEach(({ attributes = {} }) => {
+        const account = String(attributes.ACCTID || "").trim();
+        if (account && !acresByAccount.has(account)) acresByAccount.set(account, Number(attributes.POLYACRES));
+      });
+      loaded = Math.min(count, loaded + MAX_PARCELS_PER_REQUEST);
+      showParcelLoadProgress("Loading parcel shape acreage…", loaded, count);
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, loadPages));
+  return acresByAccount;
+}
+
 async function detailedParcelCsv(signal) {
   const scenario = scenarioSnapshot();
   const records = await loadTaxRecordsForDownload(signal);
-  setStatus("Matching parcels to districts and urban areas…", "loading");
+  setStatus("Matching parcels to districts, urban areas, and parcel shapes…", "loading");
   const counties = new Set(records.map(({ properties }) => taxJurisdictionDetails(properties).county));
-  const [urbanFeatures, districts] = await Promise.all([
+  const [urbanFeatures, districts, polygonAcresByAccount] = await Promise.all([
     ensureUrbanFeatures(),
     loadParcelDistricts(counties, signal),
+    loadPolygonAcresByAccount(selectedGeography, signal),
   ]);
   const meanSfhLandRatio = latestTaxSummary?.meanSfhLandRatio ?? null;
   const medianSfhLandRatio = latestTaxSummary?.medianSfhLandRatio ?? null;
   const headers = [
     "ACCTID", "ADDRESS", "STRTNUM", "STRTDIR", "STRTNAM", "STRTTYP", "STRTSFX", "STRTUNT",
     "CITY", "ZIPCODE", "DESCLU", "LU", "DESCBLDG", "PROPERTY_TYPE", "ACRES", "SQFTSTRC", "YEARBLT",
-    "NFMLNDVL", "NFMIMPVL", "NFMTTLVL", "ZONING", "BLDG_UNITS", "OOI", "OWNER_OCCUPANCY",
+    "NFMLNDVL", "NFMIMPVL", "NFMTTLVL", "PARCEL_POLYGON_ACRES", "LAND_VALUE_PER_ACRE",
+    "ZONING", "BLDG_UNITS", "OOI", "OWNER_OCCUPANCY",
     "JURSCODE", "TOWNCODE", "DESCTOWN", "COUNTY", "TAX_MUNICIPALITY",
     "LEGISLATIVE_DISTRICT", "CONGRESSIONAL_DISTRICT", "COUNTY_COUNCIL_DISTRICT",
     "APPLICABLE_TAX_RATE_PERCENT", "PREDICTED_TAX_BILL", "SPLIT_RATES_APPLY", "SPLIT_LAND_RATE_PERCENT", "SPLIT_IMPROVEMENT_RATE_PERCENT",
@@ -2921,11 +3277,14 @@ async function detailedParcelCsv(signal) {
       : null;
     const change = predictedTax !== null && hypotheticalTax !== null ? hypotheticalTax - predictedTax : null;
     const councilDistricts = districts.council.filter((district) => district.county === details.county);
+    const polygonAcres = polygonAcresByAccount.get(String(properties.ACCTID || "").trim()) ?? null;
+    const landValuePerAcre = polygonAcres > 0 && Number.isFinite(land) ? Math.round(land / polygonAcres) : "";
     return [
       properties.ACCTID, properties.ADDRESS, properties.STRTNUM, properties.STRTDIR,
       properties.STRTNAM, properties.STRTTYP, properties.STRTSFX, properties.STRTUNT, properties.CITY, properties.ZIPCODE,
       properties.DESCLU, properties.LU, properties.DESCBLDG, propertyTypeFor(properties).label,
       properties.ACRES, properties.SQFTSTRC, properties.YEARBLT, land, improvement, total,
+      polygonAcres ?? "", landValuePerAcre,
       properties.ZONING, properties.BLDG_UNITS, properties.OOI, occupancyGroupFor(properties.OOI).label,
       properties.JURSCODE, properties.TOWNCODE, properties.DESCTOWN, details.county, details.municipality ?? "",
       findDistrict(districts.legislative, center), findDistrict(districts.congressional, center),
@@ -3013,7 +3372,7 @@ function taxPopupDetails(properties) {
   };
 }
 
-function popupMarkup(properties) {
+function popupMarkup(properties, shapeRows = "") {
   const address = [
     properties.STRTNUM,
     properties.STRTDIR,
@@ -3044,6 +3403,7 @@ function popupMarkup(properties) {
         <dt>Improvement assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMIMPVL))} ${properties.NFMTTLVL ? `(${((properties.NFMIMPVL / properties.NFMTTLVL) * 100).toFixed(0)}%)` : ""}</dd>
         <dt>Total assessment</dt><dd>${escapeHtml(formatCurrency(properties.NFMTTLVL))} ${properties.NFMTTLVL ? `(100%)` : ""}</dd>
         <dt>Zone</dt><dd>${escapeHtml(displayValue(properties.ZONING))}</dd>
+        ${shapeRows}
         <dt>Applicable tax rate</dt><dd>${escapeHtml(formatTaxRate(taxDetails.currentRate))} <a href="${escapeHtml(TAX_RATE_SOURCE.url)}" target="_blank" rel="noopener">(SDAT ${escapeHtml(TAX_RATE_SOURCE.updated)})</a>${taxDetails.countySource ? ` <a href="${escapeHtml(taxDetails.countySource.url)}" target="_blank" rel="noopener" title="${escapeHtml(taxDetails.countyNote)}">(county add-on rates)</a>` : ""}</dd>
         <dt>Predicted tax bill</dt><dd>${escapeHtml(formatCurrency(taxDetails.currentTax))}</dd>
         ${activeCoverageMode() === "all" ? "" : `<dt>Split rates apply</dt><dd>${taxDetails.splitRates ? "Yes" : "No (keeps current rate)"}</dd>`}
@@ -3053,21 +3413,43 @@ function popupMarkup(properties) {
     </div>`;
 }
 
-function stackedPopupMarkup(accounts) {
-  if (accounts.length === 1) return popupMarkup(accounts[0]);
+function formatAcres(value) {
+  return Number.isFinite(value)
+    ? `${value.toLocaleString("en-US", { maximumFractionDigits: 2 })} acres`
+    : "Not available";
+}
+
+// Parcel shape acreage and land value per acre. With several accounts in one shape, the value
+// combines all their land assessments, matching the map's land value per acre colors.
+function shapePopupRows(accounts, shape) {
+  let acresText = "No parcel shape";
+  if (shape) acresText = formatAcres(shape.acres);
+  const value = shape ? shapeLandValuePerAcre(accounts, shape.acres) : null;
+  const valueText = value === null
+    ? "Not available"
+    : `${formatCurrency(value)}${accounts.some(isFarmOrForestLand) ? " (farm/forest use value)" : ""}`;
+  const valueLabel = accounts.length > 1 ? `Land value per acre (all ${accounts.length} accounts)` : "Land value per acre";
+  return `<dt>Parcel acres</dt><dd>${escapeHtml(acresText)}</dd>
+        <dt>${escapeHtml(valueLabel)}</dt><dd>${escapeHtml(valueText)}</dd>`;
+}
+
+function stackedPopupMarkup(accounts, shape = null) {
+  const shapeRows = shapePopupRows(accounts, shape);
+  if (accounts.length === 1) return popupMarkup(accounts[0], shapeRows);
   const sorted = [...accounts].sort((a, b) =>
     String(a.ADDRESS || "").localeCompare(String(b.ADDRESS || ""), undefined, { numeric: true })
     || String(a.STRTUNT || "").localeCompare(String(b.STRTUNT || ""), undefined, { numeric: true }));
   return `
     <div class="parcel-popup-stack">
       <p class="parcel-popup-count">${sorted.length.toLocaleString()} taxable accounts at this location</p>
-      <div class="parcel-popup-list">${sorted.map(popupMarkup).join("")}</div>
+      <dl class="parcel-popup-shape">${shapeRows}</dl>
+      <div class="parcel-popup-list">${sorted.map((account) => popupMarkup(account)).join("")}</div>
     </div>`;
 }
 
 function refreshOpenParcelPopup() {
   if (!openParcelPopup) return;
-  openParcelPopup.popup.setContent(stackedPopupMarkup(openParcelPopup.accounts));
+  openParcelPopup.popup.setContent(stackedPopupMarkup(openParcelPopup.accounts, openParcelPopup.shape));
   openParcelPopup.popup.update();
 }
 
@@ -3083,7 +3465,8 @@ function prepareTaxModelControls() {
     updateCoverageNote();
     renderTaxScenario();
   }
-  elements.underutilizedControl.hidden = false;
+  elements.parcelColorControl.hidden = false;
+  applyParcelColorView({ announce: false });
 }
 
 function isValidRateText(text) {
@@ -3134,16 +3517,16 @@ function isUnderutilized(properties, center) {
   }
 }
 
-async function updateUnderutilizedHighlights(updateId = underutilizedUpdateId) {
-  const urbanFeatures = underutilizedMode === "high-value-urban" ? await ensureUrbanFeatures() : [];
-  if (updateId !== underutilizedUpdateId) return;
+async function updateUnderutilizedHighlights(updateId = colorViewUpdateId) {
+  const mode = elements.underutilizedSelect.value;
+  const urbanFeatures = mode === "high-value-urban" ? await ensureUrbanFeatures() : [];
+  if (updateId !== colorViewUpdateId) return;
   underutilizedContext = {
-    mode: underutilizedMode,
+    mode,
     urbanFeatures,
     meanSfhLandRatio: latestTaxSummary?.meanSfhLandRatio ?? null,
     medianSfhLandRatio: latestTaxSummary?.medianSfhLandRatio ?? null,
   };
-  parcelLayer?.restyle();
 }
 
 // Split-rate scenario. All inputs are recalculated locally from the per-jurisdiction
@@ -3298,7 +3681,7 @@ function updateTaxScenarioResults() {
   );
   taxScenarioModel.rows.forEach((row) => setScenarioValue(row.amount, row.change, row.read(results), row.current));
   refreshOpenParcelPopup();
-  updateBillChangeLegend();
+  updateMapLegend();
   parcelLayer?.restyle();
 }
 
@@ -3523,8 +3906,12 @@ async function loadParcels() {
     coverageRequest.abort();
     coverageRequest = null;
   }
-  underutilizedUpdateId += 1;
+  colorViewUpdateId += 1;
   underutilizedContext = null;
+  if (landValueRequest) {
+    landValueRequest.abort();
+    landValueRequest = null;
+  }
   const request = new AbortController();
   currentRequest = request;
   if (openParcelPopup) {
@@ -3535,16 +3922,13 @@ async function loadParcels() {
   latestTaxSummary = null;
   currentTaxRate = null;
   taxScenarioModel = null;
-  updateBillChangeLegend();
+  updateMapLegend();
   hideParcelLoadProgress();
-  elements.underutilizedSelect.disabled = false;
   elements.taxDownloadControls.hidden = true;
   setDownloadButtonsDisabled(false);
   elements.taxModelControls.hidden = true;
-  elements.underutilizedControl.hidden = true;
-  elements.underutilizedSelect.value = "";
-  updateUnderutilizedDescription();
-  underutilizedMode = "";
+  elements.parcelColorControl.hidden = true;
+  updateColorZoomHint();
   resetTaxCountyResults(elements.taxModelCountyResults);
   elements.taxModelCountyResults.hidden = true;
   resetTaxCountyResults(elements.taxCurrentCountyResults);
@@ -3821,63 +4205,85 @@ elements.geographyChoiceSelect.addEventListener("change", () => {
 
 function updateUnderutilizedDescription() {
   const selectedOption = elements.underutilizedSelect.selectedOptions[0];
-  const definition = [...elements.underutilizedControl.querySelectorAll("[data-definition-for]")].find(
+  const definition = [...elements.underutilizedOptions.querySelectorAll("[data-definition-for]")].find(
     (candidate) => candidate.dataset.definitionFor === selectedOption?.value,
   );
   const description = definition?.textContent.trim() || "";
   elements.underutilizedDescriptionText.textContent = description;
   elements.underutilizedDescription.hidden = !description;
-  updateUnderutilizedZoomHint();
 }
 
-function updateUnderutilizedZoomHint() {
+function updateColorZoomHint() {
   const zoom = map.getZoom();
   const belowMinZoom = zoom < VECTOR_MIN_ZOOM;
-  const highlightsHidden = belowMinZoom && Boolean(elements.underutilizedSelect.value);
-  elements.underutilizedZoomHint.classList.toggle("is-warning", highlightsHidden);
-  elements.underutilizedZoomHint.classList.toggle("is-ready", !belowMinZoom);
-  elements.underutilizedZoomHintText.textContent = belowMinZoom
-    ? `Highlights only appear at zoom ${VECTOR_MIN_ZOOM} or closer. Current zoom: ${zoom}.`
-    : `Zoom ${zoom}: underutilized parcels are highlighted on the map.`;
-  elements.underutilizedZoomButton.textContent = `Zoom to ${VECTOR_MIN_ZOOM}`;
-  elements.underutilizedZoomButton.hidden = !belowMinZoom;
-  zoomLevelIndicator.classList.toggle("is-below-highlight-zoom", highlightsHidden);
+  const colorsHidden = belowMinZoom && !elements.parcelColorControl.hidden
+    && elements.parcelColorSelect.value !== "plain";
+  elements.colorZoomHint.classList.toggle("is-warning", colorsHidden);
+  elements.colorZoomHint.classList.toggle("is-ready", !belowMinZoom);
+  elements.colorZoomHintText.textContent = belowMinZoom
+    ? `Parcel colors only appear at zoom ${VECTOR_MIN_ZOOM} or closer. Current zoom: ${zoom}.`
+    : `Zoom ${zoom}: parcel colors are shown on the map.`;
+  elements.colorZoomButton.textContent = `Zoom to ${VECTOR_MIN_ZOOM}`;
+  elements.colorZoomButton.hidden = !belowMinZoom;
+  zoomLevelIndicator.classList.toggle("is-below-highlight-zoom", colorsHidden);
 }
 
-map.on("zoomend", updateUnderutilizedZoomHint);
-elements.underutilizedZoomButton.addEventListener("click", () => map.setZoom(VECTOR_MIN_ZOOM));
-
-elements.underutilizedSelect.addEventListener("change", () => {
+function updateParcelColorControls() {
+  const view = elements.parcelColorSelect.value;
+  elements.parcelColorDescription.textContent = PARCEL_COLOR_VIEWS[view].description;
+  elements.underutilizedOptions.hidden = view !== "underutilized";
   updateUnderutilizedDescription();
-  underutilizedMode = elements.underutilizedSelect.value;
-  const updateId = ++underutilizedUpdateId;
+  updateColorZoomHint();
+}
 
-  if (!underutilizedMode || !parcelLayer) {
-    underutilizedContext = null;
+// Applies the "Color parcels by" setting: loads what the view needs, then restyles parcels and the legend.
+async function applyParcelColorView({ announce = true } = {}) {
+  updateParcelColorControls();
+  const view = elements.parcelColorSelect.value;
+  const updateId = ++colorViewUpdateId;
+  underutilizedContext = null;
+  parcelLayer?.restyle();
+  updateMapLegend();
+  if (!latestTaxSummary) return;
+
+  const label = view === "underutilized"
+    ? `underutilized parcels (${elements.underutilizedSelect.selectedOptions[0]?.textContent ?? ""})`
+    : PARCEL_COLOR_VIEWS[view].label;
+  try {
+    if (view === "underutilized") {
+      await updateUnderutilizedHighlights(updateId);
+    } else if (view === "land-value-per-acre" && !latestTaxSummary.landValuePerAcre) {
+      if (announce) setStatus("Calculating land value per acre colors for the selection…", "loading");
+      await ensureLandValueBreaks();
+    }
+    if (updateId !== colorViewUpdateId) return;
     parcelLayer?.restyle();
-    setStatus("Underutilized parcel highlights cleared.", "success");
-    return;
+    updateMapLegend();
+    if (!announce) return;
+    if (view === "plain") {
+      setStatus("Parcel coloring turned off.", "success");
+    } else {
+      setStatus(
+        map.getZoom() >= VECTOR_MIN_ZOOM
+          ? `Parcels colored by ${label}.`
+          : `Parcels colored by ${label}. Zoom to level ${VECTOR_MIN_ZOOM} or closer to see the colors.`,
+        "success",
+      );
+    }
+  } catch (error) {
+    if (error.name === "AbortError" || updateId !== colorViewUpdateId) return;
+    console.warn(`Could not color parcels by ${label}:`, error);
+    updateMapLegend();
+    setStatus(`Could not color parcels by ${label}. ${error.message}`, "error");
   }
+}
 
-  updateUnderutilizedHighlights(updateId)
-    .then(() => {
-      if (updateId === underutilizedUpdateId) {
-        setStatus(
-          map.getZoom() >= VECTOR_MIN_ZOOM
-            ? "Underutilized parcel highlights applied."
-            : `Underutilized view selected. Zoom to level ${VECTOR_MIN_ZOOM} or closer to see highlighted parcels.`,
-          "success",
-        );
-      }
-    })
-    .catch((error) => {
-      if (updateId !== underutilizedUpdateId) return;
-      console.warn("Could not apply underutilized parcel highlight:", error);
-      setStatus("Could not load the urban-area boundary.", "error");
-    });
-});
+map.on("zoomend", updateColorZoomHint);
+elements.colorZoomButton.addEventListener("click", () => map.setZoom(VECTOR_MIN_ZOOM));
+elements.parcelColorSelect.addEventListener("change", () => applyParcelColorView());
+elements.underutilizedSelect.addEventListener("change", () => applyParcelColorView());
 
-updateUnderutilizedDescription();
+updateParcelColorControls();
 
 elements.refreshParcels.addEventListener("click", loadParcels);
 elements.taxModelControls.addEventListener("submit", (event) => event.preventDefault());
