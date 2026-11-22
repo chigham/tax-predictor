@@ -2102,7 +2102,7 @@ function rateSourceNote(byJurisdiction) {
   const note = document.createElement("p");
   note.className = "rate-source-note";
   note.append(
-    "Rates from the ",
+    "Real property rates from the ",
     sourceLink(TAX_RATE_SOURCE.url, TAX_RATE_SOURCE.shortTitle),
     ` (updated ${TAX_RATE_SOURCE.updated}), tax year ${TAX_RATE_SOURCE.taxYear}.`,
   );
