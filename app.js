@@ -2804,7 +2804,7 @@ async function summaryText(signal) {
   heading("Definitions");
   [
     "Current bill: assessed value x current rate.",
-    "Hypothetical bill: land value x land rate + improvement value x improvement rate, using the rates for the account's tax jurisdiction. Accounts the split rates do not apply to (see Split rates apply under SCENARIO SETTINGS) keep their current bill.",
+    "Hypothetical bill: (land value x land rate) + (improvement value x improvement rate), using the county rates for the account's tax jurisdiction. Accounts the split rates do not apply to (see Split rates apply under SCENARIO SETTINGS) keep their current bill.",
     "Change / Change %: hypothetical minus current tax, in dollars and as a percent of current tax.",
     "Share now / Share after: the group's share of all current / hypothetical tax in the selection.",
     `Pay less / Pay more: the bill falls / rises by more than ${formatPercent(ABOUT_THE_SAME_THRESHOLD * 100)}. About the same: within ${formatPercent(ABOUT_THE_SAME_THRESHOLD * 100)} either way.`,
