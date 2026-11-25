@@ -1553,13 +1553,21 @@ async function loadAnalysisPoints(geography, spatialFilter, signal) {
   return pointFeatures.filter((feature) => contains(feature.geometry.coordinates));
 }
 
-async function loadShapes(spatialFilter, signal) {
+function shapeSimplificationOffset() {
+  const degreesPerPixel = 360 / (256 * 2 ** map.getZoom());
+  return (degreesPerPixel * Math.cos((map.getCenter().lat * Math.PI) / 180)) / 2;
+}
+async function loadShapes(spatialFilter, signal, maxAllowableOffset = 0) {
   return queryAllGeojson(PARCEL_LAYER_URL, {
     where: PARCEL_SHAPE_WHERE,
     ...spatialFilter,
     outFields: "OBJECTID,POLYACRES",
     returnGeometry: "true",
     outSR: "4326",
+    ...(maxAllowableOffset > 0 && {
+      maxAllowableOffset: String(maxAllowableOffset),
+      geometryPrecision: "6",
+    }),
   }, signal, MAX_PARCELS_PER_REQUEST);
 }
 
@@ -1722,7 +1730,7 @@ function createParcelMapLayer(geography) {
   const showVectors = async (signal) => {
     const view = viewEnvelopeFilter();
     const [shapes, points] = await Promise.all([
-      loadShapes(view, signal),
+      loadShapes(view, signal, shapeSimplificationOffset()),
       loadAnalysisPoints(geography, view, signal),
     ]);
     if (signal.aborted || !map.hasLayer(layer)) return;
